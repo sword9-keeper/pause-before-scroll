@@ -140,7 +140,8 @@ chrome.webNavigation.onHistoryStateUpdated.addListener(details => run(() => onNa
 chrome.webNavigation.onReferenceFragmentUpdated.addListener(details => run(() => onNavigation(details)));
 
 function requirePage(sender, filename) {
-  if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL(filename)) {
+  if (sender.id !== chrome.runtime.id || sender.frameId !== 0 ||
+      sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL(filename)) {
     throw new Error("此操作只能在插件页面执行。");
   }
 }

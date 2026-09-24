@@ -11,6 +11,8 @@
 
 不需要构建、不需要登录，也不用提供 Cookie。不要只双击 `pause.html`，它依赖扩展后台。ZIP 包先解压再加载；开发和测试使用源码目录。
 
+更新时覆盖原目录，在 `chrome://extensions` 点击本插件的「重新加载」，然后重新打开目标网址。不必卸载，原有设置和记录会保留；正在进行的许可会结束。
+
 ## 当前规则
 
 - 三个网站及其子域名全部限制。Bilibili 收藏播放列表暂不豁免。
@@ -47,4 +49,4 @@ npm run test:e2e
 
 浏览器测试使用隔离的 Chromium 配置和模拟网站响应，不使用个人 Cookie。截图在 `test-results/`。测试没有覆盖三个网站的真实登录态和视频全屏场景。
 
-打包：`powershell -ExecutionPolicy Bypass -File scripts/package.ps1`。交接见 [HANDOFF.md](HANDOFF.md)。
+打包：`pwsh -ExecutionPolicy Bypass -File scripts/package.ps1`。交接见 [HANDOFF.md](HANDOFF.md)。

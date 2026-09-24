@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "刷之前想一下",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "进入前停一下，按自己选择的时间离开。记录只保存在本地。",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms", "webNavigation", "declarativeNetRequestWithHostAccess"],
@@ -11,6 +11,9 @@
     "*://*.bilibili.com/*"
   ],
   "background": { "service_worker": "background.js", "type": "module" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-ancestors 'none';"
+  },
   "action": { "default_title": "刷之前想一下 · 记录与设置" },
   "options_page": "journal.html",
   "content_scripts": [{
@@ -20,6 +23,6 @@
   }],
   "web_accessible_resources": [{
     "resources": ["pause.html"],
-    "matches": ["*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*"]
+    "matches": ["http://*/*", "https://*/*"]
   }]
 }

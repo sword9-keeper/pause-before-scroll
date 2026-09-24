@@ -44,7 +44,10 @@ try {
       body: "<!doctype html><html><head><meta charset='utf-8'><title>Site fixture</title></head><body><h1>Test content</h1><p>Extension test fixture.</p></body></html>"
     }));
   await context.route("https://www.google.com/**", route =>
-    route.fulfill({ status: 200, contentType: "text/html", body: "<title>Exit fixture</title><h1>Exit</h1>" }));
+    route.fulfill({
+      status: 200, contentType: "text/html",
+      body: '<title>Exit fixture</title><h1>Exit</h1><a id="outbound" href="https://www.douyin.com/?ug_source=pc_liangxiang_01">Open Douyin</a><a id="new-tab" target="_blank" href="https://www.xiaohongshu.com/explore/test">Open in new tab</a>'
+    }));
 
   const page = await context.newPage();
   await page.goto("https://www.douyin.com/");
@@ -214,6 +217,48 @@ try {
   await journal.locator("#clear").click();
   await eventually(async () => (await data()).records.length === 0, "clear finished records");
   passed("confirmed record deletion clears only completed history");
+  const outbound = await context.newPage();
+  await outbound.goto("https://www.google.com/");
+  await outbound.locator("#outbound").click();
+  try {
+    await eventually(() => outbound.evaluate(() => Boolean(document.querySelector("#leave:not(:disabled)"))), "external-link confirmation", 5000);
+  } catch (error) {
+    console.error("External navigation URL:", outbound.url());
+    console.error("External navigation body:", await outbound.locator("body").innerText());
+    await outbound.screenshot({ path: path.join(output, "external-link-failure.png") });
+    throw error;
+  }
+  assert.equal((await data()).records.length, 1);
+  assert.equal((await data()).records[0].siteId, "douyin");
+  passed("external website link opens usable confirmation and records an attempt");
+  await outbound.locator("#choose").click();
+  await outbound.locator("#reason").selectOption("查找资料");
+  await outbound.locator("#continue").click();
+  await outbound.waitForURL("https://www.douyin.com/?ug_source=pc_liangxiang_01");
+  assert.equal((await data()).records[0].outcome, "active");
+  passed("external-link confirmation can grant access to the original query URL");
+  await outbound.close();
+  const source = await context.newPage();
+  await source.goto("https://www.google.com/");
+  const popupPromise = context.waitForEvent("page");
+  await source.locator("#new-tab").click();
+  const popup = await popupPromise;
+  await popup.waitForURL(`${extension}/pause.html#**`);
+  await eventually(() => popup.locator("#leave").isEnabled(), "external new-tab confirmation");
+  assert.equal((await data()).records.at(-1).siteId, "xiaohongshu");
+  passed("external target-blank link opens usable confirmation and records an attempt");
+  await popup.close();
+  const attemptsBeforeFrame = (await data()).records.length;
+  await source.evaluate(url => {
+    const frame = document.createElement("iframe");
+    frame.src = url;
+    document.body.append(frame);
+  }, `${extension}/pause.html#https://www.douyin.com/`);
+  await source.waitForTimeout(500);
+  assert.equal(source.url(), "https://www.google.com/");
+  assert.equal((await data()).records.length, attemptsBeforeFrame);
+  passed("embedded confirmation cannot create attempts or control the parent tab");
+  await source.close();
   assert.deepEqual(errors, []);
   passed("no uncaught page errors");
   console.log(`\n${checks} browser checks passed. Screenshots: ${output}`);

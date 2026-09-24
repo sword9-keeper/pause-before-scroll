@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { siteFor, targetUrl, validateSettings, validateGrant, redirectRules, allowRule, DEFAULT_SETTINGS } from "../core.js";
 
 test("matches only supported domains and their real subdomains", () => {
@@ -49,4 +50,16 @@ test("allow rules are scoped to one tab and one site", () => {
   assert.deepEqual(rule.condition.requestDomains, ["douyin.com"]);
   assert.deepEqual(rule.condition.resourceTypes, ["main_frame"]);
   assert.ok(rule.priority > redirectRules("test")[0].priority);
+});
+
+test("external navigation may reach only the confirmation resource without broader host permissions", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+  assert.deepEqual(manifest.web_accessible_resources, [{
+    resources: ["pause.html"],
+    matches: ["http://*/*", "https://*/*"]
+  }]);
+  assert.deepEqual(manifest.host_permissions, [
+    "*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*"
+  ]);
+  assert.match(manifest.content_security_policy.extension_pages, /frame-ancestors 'none'/);
 });
