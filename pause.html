@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>刷之前想一下</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="pause.js"></script>
+</head>
+<body class="pause-page">
+  <header class="topbar">
+    <a class="brand" href="journal.html"><span class="mark" aria-hidden="true">Ⅱ</span>刷之前想一下</a>
+    <a href="journal.html" target="_blank">记录与设置 ↗</a>
+  </header>
+  <main class="pause-main">
+    <p class="eyebrow" id="destination">进入之前</p>
+    <h1 id="quote">什么都无法舍弃的人，什么都无法做到。</h1>
+    <p class="attribution">《进击的巨人》</p>
+    <div class="decision">
+      <h2>现在，要打开吗？</h2>
+      <div class="decision-actions">
+        <button id="leave" class="primary" disabled>算了，离开</button>
+        <button id="choose" class="secondary" disabled aria-expanded="false" aria-controls="visit-form">我需要进去</button>
+      </div>
+    </div>
+    <form id="visit-form" hidden>
+      <fieldset>
+        <legend>这次待多久</legend>
+        <div class="time-options">
+          <label><input type="radio" name="duration" value="5" checked><span>5 分钟</span></label>
+          <label><input type="radio" name="duration" value="10"><span>10 分钟</span></label>
+          <label><input type="radio" name="duration" value="15"><span>15 分钟</span></label>
+          <label><input type="radio" name="duration" value="custom"><span>自定义</span></label>
+        </div>
+        <label class="custom-duration" id="custom-wrap" hidden>分钟
+          <input id="custom-minutes" type="number" min="0.1" max="1440" step="0.1" value="15">
+        </label>
+      </fieldset>
+      <label for="reason">为了什么</label>
+      <select id="reason"></select>
+      <label id="custom-reason-label" for="custom-reason" hidden>这次的用途</label>
+      <input id="custom-reason" placeholder="我这次想……" maxlength="200" hidden>
+      <button type="submit" class="primary" id="continue">开始这段时间</button>
+    </form>
+    <p id="error" role="alert"></p>
+  </main>
+  <footer>一次停顿，一个自己的选择。</footer>
+</body>
+</html>

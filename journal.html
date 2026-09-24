@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>记录与设置 · 刷之前想一下</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="journal.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand"><span class="mark" aria-hidden="true">Ⅱ</span>刷之前想一下</span>
+    <span class="local-label">仅保存在本地</span>
+  </header>
+  <main class="journal-main">
+    <nav class="tabs" aria-label="页面">
+      <button id="records-tab" class="tab active" aria-pressed="true">记录</button>
+      <button id="settings-tab" class="tab" aria-pressed="false">设置</button>
+    </nav>
+    <section id="records-panel">
+      <div class="section-heading"><h1>浏览记录</h1><button id="export" class="secondary">导出 JSON</button></div>
+      <div class="filters">
+        <label>日期<input id="date-filter" type="date"></label>
+        <label>网站<select id="site-filter"><option value="">全部网站</option><option value="douyin">抖音</option><option value="xiaohongshu">小红书</option><option value="bilibili">哔哩哔哩</option></select></label>
+        <button id="all-dates" class="text-button">全部日期</button>
+      </div>
+      <dl class="stats">
+        <div><dt>访问尝试</dt><dd id="attempt-count">0</dd></div>
+        <div><dt>选择进入</dt><dd id="visit-count">0</dd></div>
+        <div><dt>选择离开</dt><dd id="decline-count">0</dd></div>
+        <div><dt>已记录时长</dt><dd id="total-time">0:00</dd></div>
+      </dl>
+      <div class="table-scroll">
+        <table><thead><tr><th>时间</th><th>网站</th><th>用途</th><th>计划</th><th>实际</th><th>结束方式</th></tr></thead><tbody id="record-rows"></tbody></table>
+      </div>
+      <p id="empty" class="empty" hidden>这段时间还没有记录。</p>
+      <div class="records-footer"><button id="clear" class="text-button danger">清除已结束的记录</button><span id="record-count"></span></div>
+    </section>
+    <section id="settings-panel" hidden>
+      <h1>设置</h1>
+      <form id="settings-form" class="settings-form">
+        <label for="exit-url">离开后前往</label>
+        <input id="exit-url" type="url" required>
+        <label for="quote-input">确认页台词</label>
+        <textarea id="quote-input" maxlength="300" rows="3" required></textarea>
+        <label for="reasons-input">预设用途 · 每行一项</label>
+        <textarea id="reasons-input" rows="5"></textarea>
+        <label for="warning-input">提前提醒 · 秒</label>
+        <input id="warning-input" type="number" min="1" max="300" required>
+        <fieldset class="sites"><legend>当前限制</legend><span>抖音 · 全部</span><span>小红书 · 全部</span><span>哔哩哔哩 · 全部</span></fieldset>
+        <button class="primary" type="submit">保存设置</button>
+      </form>
+    </section>
+    <p id="status" role="status"></p>
+  </main>
+</body>
+</html>
