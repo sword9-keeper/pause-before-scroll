@@ -56,7 +56,8 @@ test("external navigation may reach only the confirmation resource without broad
   const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
   assert.deepEqual(manifest.web_accessible_resources, [{
     resources: ["pause.html"],
-    matches: ["http://*/*", "https://*/*"]
+    matches: ["http://*/*", "https://*/*"],
+    extension_ids: ["*"]
   }]);
   assert.deepEqual(manifest.host_permissions, [
     "*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*"

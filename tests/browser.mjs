@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const launcher = path.join(root, "tests", "fixtures", "launcher");
 const output = path.join(root, "test-results");
 const profile = await mkdtemp(path.join(tmpdir(), "pause-extension-"));
 await mkdir(output, { recursive: true });
@@ -13,7 +14,7 @@ const context = await chromium.launchPersistentContext(profile, {
   channel: "chromium",
   headless: true,
   viewport: { width: 1365, height: 900 },
-  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`]
+  args: [`--disable-extensions-except=${root},${launcher}`, `--load-extension=${root},${launcher}`]
 });
 const errors = [];
 context.on("weberror", error => errors.push(error.error().message));
@@ -148,6 +149,7 @@ try {
   const journal = await context.newPage();
   await journal.goto(`${extension}/journal.html`);
   await eventually(async () => Number(await journal.locator("#attempt-count").textContent()) > 0, "journal data");
+  assert.equal(await journal.locator("#version").textContent(), `v${await worker.evaluate(() => chrome.runtime.getManifest().version)}`);
   await journal.screenshot({ path: path.join(output, "journal-desktop.png"), fullPage: true });
   await journal.setViewportSize({ width: 390, height: 844 });
   await journal.screenshot({ path: path.join(output, "journal-mobile.png"), fullPage: true });
@@ -259,6 +261,22 @@ try {
   assert.equal((await data()).records.length, attemptsBeforeFrame);
   passed("embedded confirmation cannot create attempts or control the parent tab");
   await source.close();
+  const extensionLauncher = await context.newPage();
+  await extensionLauncher.goto("chrome://newtab/");
+  await extensionLauncher.locator("#outbound").waitFor();
+  const attemptsBeforeLauncher = (await data()).records.length;
+  await extensionLauncher.locator("#outbound").click();
+  try {
+    await eventually(() => extensionLauncher.evaluate(() => Boolean(document.querySelector("#leave:not(:disabled)"))), "extension new-tab confirmation", 5000);
+  } catch (error) {
+    console.error("Extension launcher navigation URL:", extensionLauncher.url());
+    console.error("Extension launcher navigation body:", await extensionLauncher.locator("body").innerText());
+    await extensionLauncher.screenshot({ path: path.join(output, "extension-launcher-failure.png") });
+    throw error;
+  }
+  assert.equal((await data()).records.length, attemptsBeforeLauncher + 1);
+  passed("third-party extension new-tab link opens usable confirmation and records an attempt");
+  await extensionLauncher.close();
   assert.deepEqual(errors, []);
   passed("no uncaught page errors");
   console.log(`\n${checks} browser checks passed. Screenshots: ${output}`);

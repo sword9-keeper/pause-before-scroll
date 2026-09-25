@@ -1,0 +1,6 @@
+{
+  "manifest_version": 3,
+  "name": "Pause test launcher",
+  "version": "1.0.0",
+  "chrome_url_overrides": { "newtab": "newtab.html" }
+}

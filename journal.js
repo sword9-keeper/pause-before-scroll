@@ -1,6 +1,7 @@
 import { formatDuration } from "./core.js";
 
 const $ = selector => document.querySelector(selector);
+$("#version").textContent = `v${chrome.runtime.getManifest().version}`;
 let records = [];
 const outcomes = {
   pending: "尚未选择", active: "进行中", declined: "选择离开",
