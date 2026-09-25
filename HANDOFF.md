@@ -46,7 +46,7 @@
 
 2026-09-25 对照了两份源码，没有复制实现：
 
-- [LeechBlock NG Chrome](https://github.com/proginosko/LeechBlockNG-chrome/tree/dbbaed37225bb030dc21d0440754cec04d186b09)：MV3。`background.js` 监听顶层导航，在 `LB_checkTab` 中判断规则，再通过 `chrome.tabs.update` 打开 `blocked.html`；不使用 DNR。临时放行、时间预算和标签页信息由后台处理，`content.js` 负责页内计时提示。
+- [LeechBlock NG Chrome](https://github.com/proginosko/LeechBlockNG-chrome/tree/dbbaed37225bb030dc21d0440754cec04d186b09)：MV3。`background.js` 监听顶层导航，在 `checkTab` 中判断规则，再通过 `chrome.tabs.update` 打开拦截页；不使用 DNR。临时放行、时间预算和标签页信息由后台处理，`content.js` 负责页内计时提示。
 - [Mindful Browsing](https://github.com/skoczen/mindful-browsing/tree/d143af8ceec26f71ae516a1a3f0fc500416ff49a)：读到的公开 `extension/manifest.json` 仍是 MV2。`js/mindful.js` 通过 content script 显示覆盖层，继续后隐藏覆盖层，并在十分钟后再提示。适合参考交互，不适合直接移植旧权限和后台写法。
 
 对本项目的启发：用户需要的是停顿，不是网络隔离。后续可评估 LeechBlock 式“导航事件 + 后台跳转”，减少对重定向来源权限的依赖；代价是不能保证目标页面零请求。这是待决定的方案，当前版本仍使用 DNR。
