@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { siteFor, targetUrl, validateSettings, validateGrant, redirectRules, allowRule, DEFAULT_SETTINGS } from "../core.js";
+import { siteFor, targetUrl, pauseTarget, validateSettings, validateGrant, DEFAULT_SETTINGS } from "../core.js";
 
 test("matches only supported domains and their real subdomains", () => {
   assert.equal(siteFor("https://www.douyin.com/").id, "douyin");
@@ -34,31 +34,25 @@ test("requires explicit duration and nonempty reason", () => {
   assert.throws(() => validateGrant(15, "  "));
 });
 
-test("redirect rules preserve target and exclude lookalike domains", () => {
-  const rules = redirectRules("chrome-extension://test/pause.html");
-  assert.equal(rules.length, 3);
-  const rule = rules[2];
-  const regex = new RegExp(rule.condition.regexFilter, "i");
-  assert.match("https://www.bilibili.com/list/ml3197110280?bvid=BV19Scpz3ED5", regex);
-  assert.doesNotMatch("https://bilibili.com.evil.test/", regex);
-  assert.equal(rule.action.redirect.regexSubstitution, "chrome-extension://test/pause.html#\\0");
+test("confirmation targets preserve path, query, and fragments", () => {
+  const page = "chrome-extension://test/pause.html";
+  const target = "https://www.bilibili.com/list/ml3197110280?bvid=BV19Scpz3ED5#part2";
+  assert.equal(pauseTarget(`${page}#${target}`, page), target);
 });
 
-test("allow rules are scoped to one tab and one site", () => {
-  const rule = allowRule({ tabId: 42, siteId: "douyin" });
-  assert.deepEqual(rule.condition.tabIds, [42]);
-  assert.deepEqual(rule.condition.requestDomains, ["douyin.com"]);
-  assert.deepEqual(rule.condition.resourceTypes, ["main_frame"]);
-  assert.ok(rule.priority > redirectRules("test")[0].priority);
+test("confirmation parser rejects other extension pages and unsafe targets", () => {
+  const page = "chrome-extension://test/pause.html";
+  for (const url of [
+    `${page}#javascript:alert(1)`, `${page}#https://www.google.com/`,
+    `${page}#https://me:secret@douyin.com/`, `${page}.evil#https://douyin.com/`,
+    "chrome-extension://other/pause.html#https://douyin.com/", undefined
+  ]) assert.equal(pauseTarget(url, page), null);
 });
 
-test("external navigation may reach only the confirmation resource without broader host permissions", () => {
+test("navigation interception needs neither DNR nor web-accessible extension pages", () => {
   const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
-  assert.deepEqual(manifest.web_accessible_resources, [{
-    resources: ["pause.html"],
-    matches: ["http://*/*", "https://*/*"],
-    extension_ids: ["*"]
-  }]);
+  assert.equal(manifest.web_accessible_resources, undefined);
+  assert.deepEqual(manifest.permissions, ["storage", "alarms", "webNavigation"]);
   assert.deepEqual(manifest.host_permissions, [
     "*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*"
   ]);

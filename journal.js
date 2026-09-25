@@ -6,7 +6,8 @@ let records = [];
 const outcomes = {
   pending: "尚未选择", active: "进行中", declined: "选择离开",
   dismissed: "关闭确认页 / 离开", expired: "时间到", closed: "主动关页",
-  left: "离开网站", interrupted: "浏览器 / 插件中断", error: "放行失败"
+  left: "离开网站", interrupted: "浏览器 / 插件中断", error: "放行失败",
+  navigation_error: "确认页跳转失败"
 };
 
 async function request(type, extra = {}) {

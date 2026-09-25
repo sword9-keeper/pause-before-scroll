@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Pause legacy upgrade fixture",
+  "version": "0.1.2",
+  "permissions": ["storage", "alarms", "webNavigation", "declarativeNetRequestWithHostAccess"],
+  "host_permissions": ["*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*"],
+  "background": { "service_worker": "legacy.js" },
+  "web_accessible_resources": [{
+    "resources": ["old-blocked.html"],
+    "matches": ["http://*/*", "https://*/*"],
+    "extension_ids": ["*"]
+  }]
+}

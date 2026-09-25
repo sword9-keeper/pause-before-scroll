@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "刷之前想一下",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "进入前停一下，按自己选择的时间离开。记录只保存在本地。",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "alarms", "webNavigation", "declarativeNetRequestWithHostAccess"],
+  "permissions": ["storage", "alarms", "webNavigation"],
   "host_permissions": [
     "*://*.douyin.com/*",
     "*://*.xiaohongshu.com/*",
@@ -20,10 +20,5 @@
     "matches": ["*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*"],
     "js": ["timer.js"],
     "run_at": "document_start"
-  }],
-  "web_accessible_resources": [{
-    "resources": ["pause.html"],
-    "matches": ["http://*/*", "https://*/*"],
-    "extension_ids": ["*"]
   }]
 }

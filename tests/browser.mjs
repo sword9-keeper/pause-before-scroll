@@ -30,10 +30,23 @@ async function eventually(check, label, timeout = 10000) {
   throw new Error(`Timed out: ${label}`);
 }
 
+async function navigate(page, url) {
+  try {
+    await page.goto(url);
+  } catch (error) {
+    // A background tab update intentionally cancels the original navigation.
+    if (!error.message.includes("net::ERR_ABORTED")) throw error;
+  }
+}
+
 try {
   let worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
   const extensionId = new URL(worker.url()).host;
   const extension = `chrome-extension://${extensionId}`;
+  const waitForPause = page => eventually(async () =>
+    page.url().startsWith(`${extension}/pause.html#`) &&
+    await page.evaluate(() => Boolean(document.querySelector("#leave:not(:disabled)"))).catch(() => false),
+  "usable confirmation");
   const data = () => worker.evaluate(() => chrome.storage.local.get(["records", "settings"]));
   const session = () => worker.evaluate(() => chrome.storage.session.get("state"));
   await eventually(async () => (await data()).settings, "extension initialization");
@@ -51,13 +64,13 @@ try {
     }));
 
   const page = await context.newPage();
-  await page.goto("https://www.douyin.com/");
-  await page.waitForURL(`${extension}/pause.html#**`);
+  await navigate(page, "https://www.douyin.com/");
+  await waitForPause(page);
   await page.locator("#leave").waitFor({ state: "visible" });
   await eventually(() => page.locator("#leave").isEnabled(), "pause initialized");
   assert.equal(await page.locator("#destination").textContent(), "即将前往 · 抖音");
   assert.equal((await data()).records.length, 1);
-  passed("network redirect opens confirmation and records one attempt");
+  passed("background navigation opens confirmation and records one attempt");
   await page.reload();
   await eventually(() => page.locator("#leave").isEnabled(), "pause reload");
   assert.equal((await data()).records.length, 1);
@@ -90,8 +103,8 @@ try {
   passed("SPA and fragment navigation do not reset time or duplicate records");
 
   const second = await context.newPage();
-  await second.goto("https://www.douyin.com/video/123");
-  await second.waitForURL(`${extension}/pause.html#**`);
+  await navigate(second, "https://www.douyin.com/video/123");
+  await waitForPause(second);
   await eventually(() => second.locator("#leave").isEnabled(), "second tab pause");
   passed("new tab does not inherit another tab's grant");
   await second.locator("#leave").click();
@@ -99,8 +112,8 @@ try {
   assert.equal((await data()).records.at(-1).outcome, "declined");
   passed("decline opens configured destination and records choice");
 
-  await page.goto("https://www.xiaohongshu.com/explore/test");
-  await page.waitForURL(`${extension}/pause.html#**`);
+  await navigate(page, "https://www.xiaohongshu.com/explore/test");
+  await waitForPause(page);
   await eventually(() => page.locator("#leave").isEnabled(), "cross-site pause");
   assert.equal((await data()).records[0].outcome, "left");
   assert.equal(Object.keys((await session()).state.grants).length, 0);
@@ -111,8 +124,8 @@ try {
 
   const playlist = "https://www.bilibili.com/list/ml3197110280?oid=116067095609579&bvid=BV19Scpz3ED5";
   const video = await context.newPage();
-  await video.goto(playlist);
-  await video.waitForURL(`${extension}/pause.html#**`);
+  await navigate(video, playlist);
+  await waitForPause(video);
   await eventually(() => video.locator("#leave").isEnabled(), "playlist pause");
   assert.equal(video.url().slice(video.url().indexOf("#") + 1), playlist);
   passed("Bilibili playlist is restricted and its full query survives redirect");
@@ -135,8 +148,8 @@ try {
   passed("background tab counts wall time, closes at expiry, and removes grant");
 
   const repeated = await context.newPage();
-  await repeated.goto(playlist);
-  await repeated.waitForURL(`${extension}/pause.html#**`);
+  await navigate(repeated, playlist);
+  await waitForPause(repeated);
   await eventually(() => repeated.locator("#leave").isEnabled(), "repeat attempt");
   await repeated.locator("#choose").click();
   await repeated.locator("#reason").selectOption("休息一下");
@@ -176,8 +189,8 @@ try {
   await journal.screenshot({ path: path.join(output, "settings-mobile.png"), fullPage: true });
 
   const restore = await context.newPage();
-  await restore.goto("https://www.douyin.com/");
-  await restore.waitForURL(`${extension}/pause.html#**`);
+  await navigate(restore, "https://www.douyin.com/");
+  await waitForPause(restore);
   await eventually(() => restore.locator("#leave").isEnabled(), "restoration pause");
   assert.equal(await restore.locator("#quote").textContent(), "今天只做这一件事。");
   assert.equal(await restore.locator(".attribution").isVisible(), false);
@@ -205,8 +218,10 @@ try {
   passed("service-worker restart preserves grants and original deadline");
   await restore.goto("https://www.google.com/");
   await eventually(async () => Object.keys((await session()).state.grants).length === 0, "leave for unrestricted site");
-  await restore.goBack();
-  await restore.waitForURL(`${extension}/pause.html#**`);
+  await restore.goBack().catch(error => {
+    if (!error.message.includes("net::ERR_ABORTED")) throw error;
+  });
+  await waitForPause(restore);
   passed("leaving for an unrestricted site revokes grant, including back navigation");
   await restore.close();
   await eventually(async () => !(await data()).records.some(record => record.outcome === "pending"), "last pending attempt closed");
@@ -223,7 +238,7 @@ try {
   await outbound.goto("https://www.google.com/");
   await outbound.locator("#outbound").click();
   try {
-    await eventually(() => outbound.evaluate(() => Boolean(document.querySelector("#leave:not(:disabled)"))), "external-link confirmation", 5000);
+    await waitForPause(outbound);
   } catch (error) {
     console.error("External navigation URL:", outbound.url());
     console.error("External navigation body:", await outbound.locator("body").innerText());
@@ -245,7 +260,7 @@ try {
   const popupPromise = context.waitForEvent("page");
   await source.locator("#new-tab").click();
   const popup = await popupPromise;
-  await popup.waitForURL(`${extension}/pause.html#**`);
+  await waitForPause(popup);
   await eventually(() => popup.locator("#leave").isEnabled(), "external new-tab confirmation");
   assert.equal((await data()).records.at(-1).siteId, "xiaohongshu");
   passed("external target-blank link opens usable confirmation and records an attempt");
@@ -267,7 +282,7 @@ try {
   const attemptsBeforeLauncher = (await data()).records.length;
   await extensionLauncher.locator("#outbound").click();
   try {
-    await eventually(() => extensionLauncher.evaluate(() => Boolean(document.querySelector("#leave:not(:disabled)"))), "extension new-tab confirmation", 5000);
+    await waitForPause(extensionLauncher);
   } catch (error) {
     console.error("Extension launcher navigation URL:", extensionLauncher.url());
     console.error("Extension launcher navigation body:", await extensionLauncher.locator("body").innerText());
@@ -277,9 +292,71 @@ try {
   assert.equal((await data()).records.length, attemptsBeforeLauncher + 1);
   passed("third-party extension new-tab link opens usable confirmation and records an attempt");
   await extensionLauncher.close();
+
+  const brokenUI = await context.newPage();
+  let scriptBlocked = false;
+  await brokenUI.route(`${extension}/pause.js`, route => {
+    scriptBlocked = true;
+    return route.abort();
+  });
+  const beforeBrokenUI = (await data()).records.length;
+  await navigate(brokenUI, "https://www.douyin.com/?no-ui=1");
+  await eventually(async () =>
+    brokenUI.url().startsWith(`${extension}/pause.html#`) &&
+    (await data()).records.length === beforeBrokenUI + 1, "attempt without confirmation script");
+  await eventually(() => scriptBlocked, "confirmation script intentionally blocked");
+  assert.equal((await data()).records.at(-1).outcome, "pending");
+  assert.equal(await brokenUI.locator("#leave").isEnabled(), false);
+  passed("the attempt is recorded even when the confirmation script cannot load");
+  await brokenUI.close();
+
+  const pendingRestore = await context.newPage();
+  await navigate(pendingRestore, "https://www.douyin.com/?pending-restart=1");
+  await waitForPause(pendingRestore);
+  const beforePendingRestart = (await data()).records.length;
+  const restartSession = await context.newCDPSession(journal);
+  const targets = await restartSession.send("Target.getTargets");
+  const activeWorker = targets.targetInfos.find(target => target.type === "service_worker" && target.url === worker.url());
+  await worker.evaluate(() => { globalThis.__restartProof = true; });
+  await restartSession.send("Target.closeTarget", { targetId: activeWorker.targetId });
+  await pendingRestore.reload();
+  await waitForPause(pendingRestore);
+  worker = context.serviceWorkers().find(candidate => candidate.url() === `${extension}/background.js`);
+  assert.equal(await worker.evaluate(() => globalThis.__restartProof), undefined);
+  assert.equal((await data()).records.length, beforePendingRestart);
+  passed("pending confirmation survives worker restart without duplicating its record");
+  await pendingRestore.close();
+  await restartSession.detach();
+
+  const rapidStart = (await data()).records.length;
+  for (let index = 0; index < 5; index++) {
+    const rapid = await context.newPage();
+    await navigate(rapid, `https://www.douyin.com/?cycle=${index}`);
+    await waitForPause(rapid);
+    await rapid.locator("#choose").click();
+    await rapid.locator("#reason").selectOption("查找资料");
+    await rapid.locator("#continue").click();
+    await rapid.waitForURL(`https://www.douyin.com/?cycle=${index}`);
+    await rapid.close();
+  }
+  await eventually(async () => (await data()).records.at(-1).outcome === "closed", "last rapid visit closed");
+  const rapidRecords = (await data()).records.slice(rapidStart);
+  assert.equal(rapidRecords.length, 5);
+  assert.ok(rapidRecords.every(record => record.outcome === "closed"));
+  passed("repeated visit/approve/close cycles do not duplicate attempts or re-block approval");
   assert.deepEqual(errors, []);
   passed("no uncaught page errors");
   console.log(`\n${checks} browser checks passed. Screenshots: ${output}`);
+} catch (error) {
+  for (const page of context.pages()) {
+    console.error("Failed-test page:", page.url());
+    console.error(await page.locator("body").innerText({ timeout: 1000 }).catch(() => "(unavailable)"));
+  }
+  const worker = context.serviceWorkers()[0];
+  if (worker) {
+    console.error("Failed-test session:", await worker.evaluate(() => chrome.storage.session.get(null)).catch(() => null));
+  }
+  throw error;
 } finally {
   await context.close();
   if (path.dirname(profile) !== path.resolve(tmpdir()) || !path.basename(profile).startsWith("pause-extension-")) {

@@ -56,30 +56,13 @@ export function validateGrant(minutes, reason) {
   return { duration, purpose };
 }
 
-export function redirectRules(extensionUrl) {
-  return SITES.map((site, index) => ({
-    id: index + 1,
-    priority: 1,
-    action: { type: "redirect", redirect: { regexSubstitution: `${extensionUrl}#\\0` } },
-    condition: {
-      regexFilter: `^https?://([a-z0-9-]+\\.)*${site.domain.replaceAll(".", "\\.")}(:[0-9]+)?/.*`,
-      resourceTypes: ["main_frame"],
-      isUrlFilterCaseSensitive: false
-    }
-  }));
-}
-
-export function allowRule(grant) {
-  return {
-    id: grant.tabId + 1000,
-    priority: 10,
-    action: { type: "allow" },
-    condition: {
-      tabIds: [grant.tabId],
-      requestDomains: [SITES.find(site => site.id === grant.siteId).domain],
-      resourceTypes: ["main_frame"]
-    }
-  };
+export function pauseTarget(raw, pausePage) {
+  if (typeof raw !== "string" || !raw.startsWith(`${pausePage}#`)) return null;
+  try {
+    return targetUrl(raw.slice(pausePage.length + 1));
+  } catch {
+    return null;
+  }
 }
 
 export function formatDuration(milliseconds) {
