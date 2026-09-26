@@ -32,7 +32,7 @@ async function harness(initial = {}) {
   });
   const webNavigation = Object.fromEntries([
     "onBeforeNavigate", "onCommitted", "onCompleted", "onHistoryStateUpdated",
-    "onReferenceFragmentUpdated", "onErrorOccurred", "onTabReplaced"
+    "onReferenceFragmentUpdated", "onErrorOccurred", "onTabReplaced", "onCreatedNavigationTarget"
   ].map(name => [name, event()]));
   const alarms = new Map();
   const chrome = {
@@ -50,6 +50,7 @@ async function harness(initial = {}) {
     },
     webNavigation,
     tabs: {
+      onCreated: event(),
       onRemoved: event(),
       async query() { return structuredClone([...tabs.values()]); },
       async get(id) {
@@ -279,5 +280,130 @@ test("a replaced tab ends the old grant and checks the replacement independently
   assert.equal(h.local.records[0].outcome, "left");
   assert.equal(h.local.records[1].siteId, "bilibili");
   assert.deepEqual(h.session.state.grants, {});
+  assert.ok(h.tabs.get(43).url.startsWith(`${base}pause.html#`));
+});
+
+test("related tabs share one record and deadline; closing the parent leaves the child active", async () => {
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "research" }, h.sender());
+  await h.drain();
+  const deadline = h.session.state.grants[42].expiresAt;
+  h.tabs.set(43, { id: 43, openerTabId: 42, url: "https://www.douyin.com/video/1" });
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: 43, sourceTabId: 42, url: h.tabs.get(43).url });
+  h.chrome.webNavigation.onBeforeNavigate.emit({ tabId: 43, frameId: 0, url: h.tabs.get(43).url });
+  await h.drain();
+  assert.equal(h.session.state.grants[43].expiresAt, deadline);
+  assert.equal(h.local.records.length, 1);
+  await h.chrome.tabs.remove(42);
+  await h.drain();
+  assert.equal(h.local.records[0].outcome, "active");
+  await h.chrome.tabs.remove(43);
+  await h.drain();
+  assert.equal(h.local.records[0].outcome, "closed");
+});
+
+test("late target creation repairs a pending child without duplicating the visit", async () => {
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "research" }, h.sender());
+  await h.drain();
+  h.tabs.set(43, { id: 43, url: "https://www.douyin.com/video/1" });
+  h.chrome.webNavigation.onBeforeNavigate.emit({ tabId: 43, frameId: 0, url: h.tabs.get(43).url });
+  await h.drain();
+  assert.equal(h.local.records.length, 2);
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({
+    tabId: 43, sourceTabId: 42, url: "https://www.douyin.com/video/1"
+  });
+  await h.drain();
+  assert.equal(h.tabs.get(43).url, "https://www.douyin.com/video/1");
+  assert.equal(h.local.records.length, 1);
+  assert.equal(h.session.state.grants[43].recordId, h.session.state.grants[42].recordId);
+});
+
+test("cross-site children and expired parents do not grant access", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "research" }, h.sender());
+  await h.drain();
+  for (const [id, url] of [[43, "https://www.bilibili.com/"], [44, "https://www.douyin.com/"]]) {
+    if (id === 44) now += 7000;
+    h.tabs.set(id, { id, openerTabId: 42, url });
+    h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: id, sourceTabId: 42, url });
+    h.chrome.webNavigation.onBeforeNavigate.emit({ tabId: id, frameId: 0, url });
+    await h.drain();
+    assert.equal(h.session.state.grants[id], undefined);
+    assert.ok(h.tabs.get(id).url.startsWith(`${base}pause.html#`));
+  }
+});
+
+test("expiry closes all related tabs with a single elapsed-time record", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "research" }, h.sender());
+  await h.drain();
+  h.tabs.set(43, { id: 43, openerTabId: 42, url: "https://www.douyin.com/video/1" });
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: 43, sourceTabId: 42, url: h.tabs.get(43).url });
+  await h.drain();
+  now += 7000;
+  h.chrome.alarms.onAlarm.emit({ name: "expire:42" });
+  await h.drain();
+  assert.deepEqual(h.removed, [42, 43]);
+  assert.equal(h.local.records.length, 1);
+  assert.equal(h.local.records[0].elapsedMs, 6000);
+  assert.equal(h.local.records[0].outcome, "expired");
+});
+
+test("worker recovery keeps the shared record active when only the child survives", async () => {
+  const grant = { siteId: "douyin", recordId: "shared", startedAt: Date.now() - 1000, expiresAt: Date.now() + 60000 };
+  const h = await harness({
+    tabs: [{ id: 43, url: "https://www.douyin.com/video/child" }],
+    local: { records: [{ id: "shared", outcome: "active", startedAt: grant.startedAt }] },
+    session: { state: { grants: { 42: { ...grant, tabId: 42 }, 43: { ...grant, tabId: 43 } }, pending: {} } }
+  });
+  assert.equal(h.local.records.length, 1);
+  assert.equal(h.local.records[0].outcome, "active");
+  assert.equal(h.session.state.grants[43].expiresAt, grant.expiresAt);
+  assert.equal(h.session.state.grants[42], undefined);
+});
+
+test("same-document SPA messages can save layout, but invalid preferences are rejected", async t => {
+  t.mock.method(console, "error", () => {});
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "research" }, h.sender());
+  await h.drain();
+  const original = h.sender();
+  h.tabs.get(42).url = "https://www.douyin.com/video/spa";
+  h.chrome.webNavigation.onHistoryStateUpdated.emit({
+    tabId: 42, frameId: 0, url: h.tabs.get(42).url, documentId: original.documentId
+  });
+  await h.drain();
+  const layout = { x: 0.2, y: 0.8, collapsed: true };
+  assert.equal((await h.send({ type: "timerLayout", layout }, original)).ok, true);
+  assert.deepEqual(h.local.timerLayout, layout);
+  assert.equal((await h.send({ type: "timerLayout", layout: { x: NaN } }, original)).ok, false);
+  assert.deepEqual(h.local.timerLayout, layout);
+});
+
+test("a blank child loses inheritance after visiting an unrelated site", async () => {
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "research" }, h.sender());
+  await h.drain();
+  h.tabs.set(43, { id: 43, url: "about:blank" });
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: 43, sourceTabId: 42, url: "about:blank" });
+  await h.drain();
+  assert.ok(h.session.state.sources[43]);
+  for (const url of ["https://www.google.com/", "https://www.douyin.com/"]) {
+    h.tabs.get(43).url = url;
+    h.chrome.webNavigation.onBeforeNavigate.emit({ tabId: 43, frameId: 0, url });
+    await h.drain();
+  }
+  assert.equal(h.session.state.grants[43], undefined);
   assert.ok(h.tabs.get(43).url.startsWith(`${base}pause.html#`));
 });

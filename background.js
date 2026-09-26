@@ -4,6 +4,7 @@ const pausePage = chrome.runtime.getURL("pause.html");
 let state = { grants: {}, pending: {} };
 let settings;
 let records = [];
+let timerLayout = { x: 1, y: 0, collapsed: false };
 let queue = Promise.resolve();
 const navigations = new Map();
 
@@ -31,7 +32,8 @@ async function finish(tabId, outcome, close = false) {
   if (!grant) return;
   await chrome.alarms.clear(`expire:${tabId}`);
   const record = recordById(grant.recordId);
-  if (record) {
+  const siblings = Object.values(state.grants).filter(item => item.tabId !== tabId && item.recordId === grant.recordId);
+  if (record && siblings.length === 0) {
     record.endedAt = Date.now();
     record.elapsedMs = Math.max(0, Math.min(record.endedAt, grant.expiresAt) - grant.startedAt);
     record.outcome = outcome;
@@ -44,6 +46,49 @@ async function finish(tabId, outcome, close = false) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (siteFor(tab?.pendingUrl || tab?.url)?.id === grant.siteId) {
       await chrome.tabs.remove(tabId).catch(() => {});
+    }
+  }
+}
+
+async function inherit(tabId, url) {
+  const source = state.sources[tabId];
+  const site = siteFor(url);
+  if (!source || !site) return false;
+  delete state.sources[tabId];
+  if (source.siteId !== site.id || source.expiresAt <= Date.now() ||
+      recordById(source.recordId)?.outcome !== "active") {
+    await persist();
+    return false;
+  }
+  const pending = state.pending[tabId];
+  if (pending) {
+    records = records.filter(record => record.id !== pending.recordId);
+    delete state.pending[tabId];
+  }
+  state.grants[tabId] = { ...source, tabId };
+  await persist();
+  await chrome.alarms.create(`expire:${tabId}`, { when: source.expiresAt });
+  return true;
+}
+
+async function captureSource(tabId, sourceTabId, url) {
+  if (state.grants[tabId]) return;
+  const source = state.grants[sourceTabId];
+  if (!source || source.expiresAt <= Date.now()) return;
+  state.sources[tabId] = { ...source };
+  await persist();
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab) {
+    delete state.sources[tabId];
+    await persist();
+    return;
+  }
+  const navigation = navigations.get(tabId);
+  const current = navigation?.url || tab.pendingUrl || tab.url;
+  const target = pauseTarget(current, pausePage) || current || url;
+  if (target && await inherit(tabId, target)) {
+    if (pauseTarget(current, pausePage) && navigations.get(tabId) === navigation) {
+      await chrome.tabs.update(tabId, { url: target });
     }
   }
 }
@@ -119,6 +164,11 @@ async function checkNavigation(details, navigation) {
   if (!isCurrent(tabId, navigation)) return;
   const site = siteFor(url);
   const target = pauseTarget(url, pausePage);
+  if (state.sources[tabId] && !site && !target && !["about:blank", "chrome://newtab/"].includes(url)) {
+    delete state.sources[tabId];
+    await persist();
+  }
+  if (!state.grants[tabId] && site) await inherit(tabId, url);
   const grant = state.grants[tabId];
   if (!site && !target && !grant && !state.pending[tabId]) return;
   if (grant) {
@@ -154,14 +204,19 @@ function observeNavigation(details, phase) {
 
 async function bootstrap() {
   const [local, session] = await Promise.all([
-    chrome.storage.local.get(["settings", "records"]),
+    chrome.storage.local.get(["settings", "records", "timerLayout"]),
     chrome.storage.session.get("state")
   ]);
   settings = { ...DEFAULT_SETTINGS, ...local.settings };
   records = local.records || [];
+  timerLayout = local.timerLayout || timerLayout;
   state = session.state || state;
+  state.sources ||= {};
   const tabs = await chrome.tabs.query({});
   const liveIds = new Set(tabs.map(tab => tab.id));
+  for (const id of Object.keys(state.sources)) {
+    if (!liveIds.has(Number(id))) delete state.sources[id];
+  }
   for (const grant of Object.values(state.grants)) {
     if (!liveIds.has(grant.tabId) || !recordById(grant.recordId)) delete state.grants[grant.tabId];
   }
@@ -208,9 +263,15 @@ chrome.alarms.onAlarm.addListener(() => schedule(async () => {
 chrome.tabs.onRemoved.addListener(tabId => {
   navigations.delete(tabId);
   schedule(async () => {
+    const hadSource = Boolean(state.sources[tabId]);
+    delete state.sources[tabId];
     await finish(tabId, "closed");
-    if (abandon(tabId)) await persist();
+    const abandoned = abandon(tabId);
+    if (abandoned || hadSource) await persist();
   });
+});
+chrome.webNavigation.onCreatedNavigationTarget.addListener(details => {
+  schedule(() => captureSource(details.tabId, details.sourceTabId, details.url));
 });
 
 chrome.webNavigation.onBeforeNavigate.addListener(details => observeNavigation(details, "before"));
@@ -263,10 +324,14 @@ async function isCurrentDocument(sender) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab) return false;
   const intent = navigations.get(tabId);
-  if (intent && intent.url !== sender.url) return false;
   if (intent?.phase === "before") return false;
   if (intent?.documentId && sender.documentId && intent.documentId !== sender.documentId) return false;
   const currentUrl = tab.pendingUrl || tab.url;
+  // A content script's sender URL can precede pushState; the document ID
+  // still identifies the live document without trusting an old page.
+  if (siteFor(sender.url) && intent?.documentId && intent.documentId === sender.documentId &&
+      siteFor(intent.url)?.id === siteFor(sender.url).id && currentUrl === intent.url) return true;
+  if (intent && intent.url !== sender.url) return false;
   if (currentUrl) return currentUrl === sender.url;
   // Without "tabs", Chrome omits extension-page URLs here. The authenticated
   // sender and the navigation document ID still identify our own top-level page.
@@ -274,11 +339,12 @@ async function isCurrentDocument(sender) {
 }
 
 async function handle(message, sender) {
-  if (message.type === "timer" || message.type === "expire") {
+  if (["timer", "expire", "timerLayout"].includes(message.type)) {
     const tabId = sender.tab?.id;
     const site = siteFor(sender.url);
     if (!site || sender.frameId !== 0) throw new Error("无效的计时来源。");
     if (!await isCurrentDocument(sender)) return null;
+    if (!state.grants[tabId]) await inherit(tabId, sender.url);
     const grant = state.grants[tabId];
     if (grant && grant.siteId === site.id && grant.expiresAt <= Date.now()) {
       await finish(tabId, "expired", true);
@@ -289,7 +355,14 @@ async function handle(message, sender) {
       await showPause(tabId, sender.url, navigations.get(tabId));
       return null;
     }
-    return { expiresAt: grant.expiresAt, warningSeconds: settings.warningSeconds };
+    if (message.type === "timerLayout") {
+      const layout = message.layout;
+      if (!layout || !Number.isFinite(layout.x) || !Number.isFinite(layout.y) ||
+          typeof layout.collapsed !== "boolean") throw new Error("无效的浮窗位置。");
+      timerLayout = { x: Math.max(0, Math.min(1, layout.x)), y: Math.max(0, Math.min(1, layout.y)), collapsed: layout.collapsed };
+      await chrome.storage.local.set({ timerLayout });
+    }
+    return { expiresAt: grant.expiresAt, warningSeconds: settings.warningSeconds, timerLayout };
   }
   if (["inspect", "continue", "leave"].includes(message.type)) {
     requirePage(sender, "pause.html");
