@@ -1,8 +1,5 @@
-export const SITES = [
-  { id: "douyin", name: "抖音", domain: "douyin.com" },
-  { id: "xiaohongshu", name: "小红书", domain: "xiaohongshu.com" },
-  { id: "bilibili", name: "哔哩哔哩", domain: "bilibili.com" }
-];
+import { SITES, configuredSite, isException, normalizeRules } from "./rules.js";
+export { SITES } from "./rules.js";
 
 export const DEFAULT_SETTINGS = {
   exitUrl: "https://www.google.com/",
@@ -10,23 +7,20 @@ export const DEFAULT_SETTINGS = {
   reasons: ["查找资料", "看指定内容", "休息一下"],
   warningSeconds: 60,
   expiryAction: "pause",
-  enabledSites: SITES.map(site => site.id)
+  enabledSites: SITES.map(site => site.id),
+  customSites: [],
+  exceptions: []
 };
 
-export function siteFor(raw, enabledSites = DEFAULT_SETTINGS.enabledSites) {
-  try {
-    const url = new URL(raw);
-    if (!["https:", "http:"].includes(url.protocol)) return null;
-    return SITES.find(site => enabledSites.includes(site.id) && (url.hostname === site.domain ||
-      url.hostname.endsWith(`.${site.domain}`))) || null;
-  } catch {
-    return null;
-  }
+export function siteFor(raw, config = DEFAULT_SETTINGS) {
+  const settings = Array.isArray(config) ? { ...DEFAULT_SETTINGS, enabledSites: config } : config;
+  const site = configuredSite(raw, settings);
+  return site?.enabled && !isException(raw, settings.exceptions) ? site : null;
 }
 
-export function targetUrl(raw) {
+export function targetUrl(raw, settings = DEFAULT_SETTINGS) {
   const url = new URL(raw);
-  if (!siteFor(raw) || url.username || url.password) throw new Error("不是有效的受限网站地址。");
+  if (!configuredSite(raw, settings)) throw new Error("不是有效的受限网站地址。");
   return url.href;
 }
 
@@ -35,8 +29,10 @@ export function validateSettings(input) {
   if (!Array.isArray(enabledSites) || enabledSites.some(id => !SITES.some(site => site.id === id))) {
     throw new Error("网站规则无效。");
   }
+  const rules = normalizeRules({ ...input, enabledSites });
   const url = new URL(input.exitUrl);
-  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || siteFor(url.href)) {
+  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password ||
+      configuredSite(url.href, { ...input, enabledSites, ...rules })) {
     throw new Error("离开网址必须是非受限网站的 HTTP 或 HTTPS 地址。");
   }
   const quote = String(input.quote || "").trim();
@@ -51,7 +47,8 @@ export function validateSettings(input) {
   }
   const expiryAction = input.expiryAction ?? DEFAULT_SETTINGS.expiryAction;
   if (!["pause", "close"].includes(expiryAction)) throw new Error("到期方式无效。");
-  return { exitUrl: url.href, quote, reasons, warningSeconds, expiryAction, enabledSites: SITES.map(site => site.id).filter(id => enabledSites.includes(id)) };
+  return { exitUrl: url.href, quote, reasons, warningSeconds, expiryAction,
+    enabledSites: SITES.map(site => site.id).filter(id => enabledSites.includes(id)), ...rules };
 }
 
 export function validateGrant(minutes, reason) {
@@ -64,10 +61,10 @@ export function validateGrant(minutes, reason) {
   return { duration, purpose };
 }
 
-export function pauseTarget(raw, pausePage) {
+export function pauseTarget(raw, pausePage, settings = DEFAULT_SETTINGS) {
   if (typeof raw !== "string" || !raw.startsWith(`${pausePage}#`)) return null;
   try {
-    return targetUrl(raw.slice(pausePage.length + 1));
+    return targetUrl(raw.slice(pausePage.length + 1), settings);
   } catch {
     return null;
   }

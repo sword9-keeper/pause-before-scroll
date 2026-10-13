@@ -15,6 +15,7 @@
   <main class="journal-main">
     <nav class="tabs" aria-label="页面">
       <button id="overview-tab" class="tab active" aria-pressed="true">回顾</button>
+      <button id="sites-tab" class="tab" aria-pressed="false">网站</button>
       <button id="records-tab" class="tab" aria-pressed="false">记录</button>
       <button id="settings-tab" class="tab" aria-pressed="false">设置</button>
       <button id="sync-tab" class="tab" aria-pressed="false">同步</button>
@@ -39,6 +40,34 @@
       <div id="site-summary" class="site-summary"></div>
       <p id="overview-empty" class="empty">还没有浏览记录。</p>
       <p id="decision-summary" class="decision-summary"></p>
+    </section>
+    <section id="sites-panel" hidden>
+      <h1 id="sites-heading">网站与例外</h1>
+      <p id="site-access-state" class="range-label" role="status"></p>
+      <form id="site-rules-form" class="rules-form">
+        <div id="site-rules" class="rule-list"></div>
+        <fieldset class="rule-add">
+          <legend>添加网站</legend>
+          <label for="site-domain">域名</label>
+          <div class="inline-field"><input id="site-domain" placeholder="youtube.com" autocomplete="off" spellcheck="false"><button id="site-add" class="secondary" type="button">添加</button></div>
+        </fieldset>
+        <fieldset class="rule-add">
+          <legend>直接放行的例外</legend>
+          <div id="site-exceptions"></div>
+          <label for="exception-url">网址</label>
+          <input id="exception-url" type="url" placeholder="https://www.bilibili.com/list/ml123456" autocomplete="off" spellcheck="false">
+          <div class="inline-field">
+            <select id="exception-mode" aria-label="例外范围"><option value="page">精确页面 · 含参数和片段</option><option value="path">此路径及子路径 · 不限参数</option></select>
+            <button id="exception-add" class="secondary" type="button">添加</button>
+          </div>
+        </fieldset>
+        <fieldset class="sites"><legend>时间到了</legend>
+          <label class="check-label"><input type="radio" name="sites-expiry-action" value="pause" checked>暂停，保留当前页面</label>
+          <label class="check-label"><input type="radio" name="sites-expiry-action" value="close">直接关闭关联标签页</label>
+        </fieldset>
+        <div class="rule-actions"><button id="site-save" class="primary" type="submit">保存网站</button><button id="setup-skip" class="text-button" type="button" hidden>暂不启用</button></div>
+      </form>
+      <a id="site-trial" class="trial-link" target="_blank" rel="noreferrer" hidden></a>
     </section>
     <section id="records-panel" hidden>
       <div class="section-heading"><h1>浏览记录</h1><button id="export" class="secondary">导出 JSON</button></div>
@@ -73,11 +102,6 @@
         <fieldset class="sites"><legend>时间到了</legend>
           <label class="check-label"><input type="radio" name="expiry-action" value="pause" checked>暂停，保留当前页面</label>
           <label class="check-label"><input type="radio" name="expiry-action" value="close">直接关闭关联标签页</label>
-        </fieldset>
-        <fieldset class="sites"><legend>受限网站 · 含子域名</legend>
-          <label class="check-label"><input type="checkbox" name="enabled-site" value="douyin" checked>抖音</label>
-          <label class="check-label"><input type="checkbox" name="enabled-site" value="xiaohongshu" checked>小红书</label>
-          <label class="check-label"><input type="checkbox" name="enabled-site" value="bilibili" checked>哔哩哔哩</label>
         </fieldset>
         <button class="primary" type="submit">保存设置</button>
       </form>

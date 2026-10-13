@@ -54,10 +54,9 @@ test("confirmation parser rejects other extension pages and unsafe targets", () 
 test("navigation interception needs neither DNR nor web-accessible extension pages", () => {
   const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
   assert.equal(manifest.web_accessible_resources, undefined);
-  assert.deepEqual(manifest.permissions, ["storage", "alarms", "webNavigation"]);
-  assert.deepEqual(manifest.host_permissions, [
-    "*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*"
-  ]);
+  assert.deepEqual(manifest.permissions, ["storage", "alarms", "webNavigation", "scripting"]);
+  assert.deepEqual(manifest.host_permissions, []);
+  assert.deepEqual(manifest.optional_host_permissions, ["*://*/*"]);
   assert.match(manifest.content_security_policy.extension_pages, /frame-ancestors 'none'/);
-  assert.deepEqual(manifest.content_scripts[0].js, ["expiry.js", "timer.js"]);
+  assert.equal(manifest.content_scripts, undefined);
 });

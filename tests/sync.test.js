@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_SETTINGS } from "../core.js";
+import { DEFAULT_SETTINGS, validateSettings } from "../core.js";
 import {
   MAX_SYNC_BYTES, validateSyncConfig, permissionOrigin, validateDocument,
   mergeDocuments, nextRevision, serializeDocument, deviceFiles, syncWebDAV
@@ -16,7 +16,7 @@ const record = id => ({
   endedAt: 2000, plannedMs: 60000, elapsedMs: 1000, reason: "test", outcome: "closed"
 });
 const doc = (device, records = [], at = 0, deletedIds = []) => ({
-  app: "back-to-flow", schemaVersion: 1,
+  app: "back-to-flow", schemaVersion: 2,
   settings: { revision: { device, at }, value: structuredClone(DEFAULT_SETTINGS) },
   records, deletedIds
 });
@@ -55,7 +55,7 @@ test("record opt-out preserves remote history but sends no local history or dele
 
 test("schema validation rejects incompatible or active records and limits the size", () => {
   for (const value of [
-    { ...doc("a"), schemaVersion: 2 },
+    { ...doc("a"), schemaVersion: 99 },
     doc("a", [{ ...record("one"), outcome: "active" }]),
     doc("a", [{ ...record("one"), reason: "x".repeat(201) }]),
     doc("a", [{ ...record("one"), attemptedAt: -1 }]),
@@ -66,7 +66,7 @@ test("schema validation rejects incompatible or active records and limits the si
 });
 
 test("DAV XML parser accepts namespaces and refuses foreign or nested credential destinations", () => {
-  const directory = `${config.url}devices-v1/`;
+  const directory = `${config.url}devices-v2/`;
   const xml = `<multistatus xmlns="DAV:">
     <response><href>${directory}device-a.json</href></response>
     <response><href>device-b.json</href></response>
@@ -108,7 +108,7 @@ test("simultaneous devices converge without ETags or overwriting another device 
 
 test("authentication, corrupt remote files, and offline failures never replace remote data", async () => {
   const dav = createDav();
-  const own = `${config.url}devices-v1/device-a.json`;
+  const own = `${config.url}devices-v2/device-a.json`;
   dav.setFailure(401);
   await assert.rejects(syncWebDAV(config, doc("a"), options(dav, "a")), /认证/);
   dav.setFailure(null);
@@ -129,7 +129,7 @@ test("network requests never follow redirects, use ambient cookies, or exceed th
     return dav.fetcher(url, init);
   };
   await syncWebDAV(config, doc("a"), { fetcher: checked, deviceId: "a" });
-  dav.files.set(`${config.url}devices-v1/device-b.json`, "x".repeat(MAX_SYNC_BYTES + 1));
+  dav.files.set(`${config.url}devices-v2/device-b.json`, "x".repeat(MAX_SYNC_BYTES + 1));
   await assert.rejects(syncWebDAV(config, doc("a"), options(dav, "a")), /4 MB/);
   const controller = new AbortController();
   controller.abort();
@@ -139,7 +139,7 @@ test("network requests never follow redirects, use ambient cookies, or exceed th
 test("the device limit does not create an unreadable thirty-third snapshot", async () => {
   const dav = createDav();
   for (let index = 0; index < 32; index++) {
-    dav.files.set(`${config.url}devices-v1/device-${index}.json`, serializeDocument(doc(String(index))));
+    dav.files.set(`${config.url}devices-v2/device-${index}.json`, serializeDocument(doc(String(index))));
   }
   await assert.rejects(syncWebDAV(config, doc("new"), options(dav, "new")), /32/);
   assert.equal(dav.files.size, 32);
@@ -162,4 +162,45 @@ test("foreground observations round-trip and survive old-client snapshots that o
     { ...measured, foregroundByDay: { "2026-10-13": -1000 }, foregroundMs: -1000 },
     { ...measured, foregroundMs: 60001, foregroundByDay: { "2026-10-13": 60001 } }
   ]) assert.throws(() => validateDocument(doc("a", [broken])));
+});
+
+test("new protocol imports legacy history without modifying any legacy device file", async () => {
+  const dav = createDav();
+  const legacy = { ...doc("old", [record("legacy")], 5), schemaVersion: 1 };
+  delete legacy.settings.value.customSites;
+  delete legacy.settings.value.exceptions;
+  const url = `${config.url}devices-v1/device-old.json`;
+  const original = JSON.stringify(legacy);
+  dav.files.set(url, original);
+  const result = await syncWebDAV(config, doc("new"), options(dav, "new"));
+  assert.equal(result.schemaVersion, 2);
+  assert.deepEqual(result.records.map(item => item.id), ["legacy"]);
+  assert.equal(dav.files.get(url), original);
+  assert.ok(dav.files.has(`${config.url}devices-v2/device-new.json`));
+  assert.ok(dav.requests.filter(item => item.method === "PUT").every(item => item.url.includes("/devices-v2/")));
+});
+
+test("an upgrading device cannot strip modern rules even when its old settings revision is newer", async () => {
+  const dav = createDav();
+  const modern = doc("modern", [record("existing")], 10);
+  modern.settings.value = validateSettings({ ...DEFAULT_SETTINGS, customSites: [{ domain: "video.example.com", name: "Videos" }],
+    exceptions: [{ mode: "path", url: "https://video.example.com/learning" }] });
+  dav.files.set(`${config.url}devices-v2/device-modern.json`, serializeDocument(modern));
+  const old = { ...doc("old", [record("old")], 1000), schemaVersion: 1 };
+  dav.files.set(`${config.url}devices-v1/device-old.json`, JSON.stringify(old));
+  const result = await syncWebDAV(config, { ...old, schemaVersion: 2 }, { ...options(dav, "old"), legacySettings: true });
+  assert.deepEqual(result.settings, modern.settings);
+  assert.deepEqual(result.records.map(item => item.id), ["existing", "old"]);
+  const current = JSON.parse(dav.files.get(`${config.url}devices-v2/device-old.json`));
+  assert.deepEqual(current.settings.value.customSites, modern.settings.value.customSites);
+});
+
+test("custom history survives rule removal and legacy corruption never produces a partial migration", async () => {
+  const customRecord = { ...record("custom"), siteId: "custom:video.example.com", siteName: "Past name" };
+  assert.deepEqual(validateDocument(doc("a", [customRecord])).records[0], customRecord);
+  assert.throws(() => validateDocument(doc("a", [{ ...customRecord, siteId: "custom:co.uk" }])));
+  const dav = createDav();
+  dav.files.set(`${config.url}devices-v1/device-old.json`, "broken");
+  await assert.rejects(syncWebDAV(config, doc("new"), options(dav, "new")), /JSON/);
+  assert.equal(dav.requests.filter(item => item.method === "PUT").length, 0);
 });

@@ -1,7 +1,9 @@
-import { SITES, validateSettings } from "./core.js";
+import { validateSettings } from "./core.js";
+import { recordSite } from "./rules.js";
 import { parseXml } from "./vendor/parse-xml.js";
 
 export const MAX_SYNC_BYTES = 4 * 1024 * 1024;
+export const SYNC_VERSION = 2;
 export const DEFAULT_SYNC_CONFIG = {
   enabled: false, url: "", username: "", password: "", syncRecords: true
 };
@@ -54,7 +56,7 @@ export function nextRevision(previous, device) {
 }
 
 function validateRecord(value) {
-  const site = SITES.find(item => item.id === value?.siteId);
+  const site = recordSite(value);
   const timestamp = number => Number.isSafeInteger(number) && number >= 0 && number <= 8640000000000000;
   const nullableTime = number => number === null || timestamp(number);
   if (!value || !validId(value.id) || !site || !finishedOutcomes.has(value.outcome) ||
@@ -96,7 +98,7 @@ function validateRecord(value) {
 }
 
 export function validateDocument(value) {
-  if (!value || value.schemaVersion !== 1 || value.app !== "back-to-flow" ||
+  if (!value || ![1, SYNC_VERSION].includes(value.schemaVersion) || value.app !== "back-to-flow" ||
       !value.settings || !Number.isSafeInteger(value.settings.revision?.at) ||
       value.settings.revision.at < 0 || value.settings.revision.at > 8640000000000000 ||
       !validId(value.settings.revision.device) ||
@@ -106,7 +108,7 @@ export function validateDocument(value) {
     throw new Error("同步文件格式或版本不兼容，本地和远端文件均未被覆盖。");
   }
   return {
-    app: "back-to-flow", schemaVersion: 1,
+    app: "back-to-flow", schemaVersion: SYNC_VERSION,
     settings: {
       revision: { at: value.settings.revision.at, device: value.settings.revision.device },
       value: validateSettings(value.settings.value)
@@ -135,7 +137,7 @@ export function mergeDocuments(local, remote, syncRecords = true) {
     }
   }
   return {
-    app: "back-to-flow", schemaVersion: 1, settings,
+    app: "back-to-flow", schemaVersion: SYNC_VERSION, settings,
     records: [...records.values()].sort((a, b) => a.attemptedAt - b.attemptedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     deletedIds
   };
@@ -212,7 +214,7 @@ export function deviceFiles(xml, directory) {
   return [...files].sort();
 }
 
-export async function syncWebDAV(config, local, { signal, deviceId, fetcher = fetch } = {}) {
+export async function syncWebDAV(config, local, { signal, deviceId, legacySettings = false, fetcher = fetch } = {}) {
   config = validateSyncConfig(config);
   if (!config.enabled) throw new Error("请先启用并保存 WebDAV 同步。");
   if (!validId(deviceId)) throw new Error("本机同步标识无效。");
@@ -232,21 +234,25 @@ export async function syncWebDAV(config, local, { signal, deviceId, fetcher = fe
     // Only the configured final directory may be created; never walk or modify its parents.
     const collection = await request(config.url, "MKCOL");
     if (![201, 405].includes(collection.status)) throw httpError(collection.status);
-    const directory = new URL("devices-v1/", config.url).href;
+    const directory = new URL("devices-v2/", config.url).href;
     const devices = await request(directory, "MKCOL");
     if (![201, 405].includes(devices.status)) throw httpError(devices.status);
-    const listing = await request(directory, "PROPFIND", {
-      Depth: "1", "Content-Type": "application/xml; charset=utf-8"
-    }, '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>');
-    if (listing.status !== 207) throw httpError(listing.status);
+    async function listFiles(folder, optional = false) {
+      const listing = await request(folder, "PROPFIND", {
+        Depth: "1", "Content-Type": "application/xml; charset=utf-8"
+      }, '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>');
+      if (optional && listing.status === 404) return [];
+      if (listing.status !== 207) throw httpError(listing.status);
+      return deviceFiles(await readLimited(listing), folder);
+    }
     const ownUrl = new URL(`device-${deviceId}.json`, directory).href;
-    const files = deviceFiles(await readLimited(listing), directory);
+    const files = await listFiles(directory);
     if (files.length === 32 && !files.includes(ownUrl)) {
       throw new Error("同步目录已有 32 个设备文件，请先备份并整理旧设备文件。");
     }
     let remote = null;
     let previousOwn = null;
-    for (const url of files) {
+    async function readDevice(url, version) {
       const response = await request(url, "GET");
       if (response.status === 200) {
         let parsed;
@@ -257,13 +263,22 @@ export async function syncWebDAV(config, local, { signal, deviceId, fetcher = fe
           }
           throw error;
         }
+        if (parsed.schemaVersion !== version) throw new Error("同步目录中的文件版本不兼容，未覆盖任何数据。");
         const document = validateDocument(parsed);
         if (url === ownUrl) previousOwn = serializeDocument(document);
         remote = mergeDocuments(document, remote);
         serializeDocument(remote);
       } else if (response.status !== 404) throw httpError(response.status);
     }
-    const merged = mergeDocuments(local, remote, config.syncRecords);
+    for (const url of files) await readDevice(url, SYNC_VERSION);
+    const modernSettings = remote?.settings;
+    if (!files.includes(ownUrl)) {
+      const legacyDirectory = new URL("devices-v1/", config.url).href;
+      for (const url of await listFiles(legacyDirectory, true)) await readDevice(url, 1);
+      if (modernSettings) remote.settings = modernSettings;
+    }
+    const outgoing = legacySettings && modernSettings ? { ...local, settings: modernSettings } : local;
+    const merged = mergeDocuments(outgoing, remote, config.syncRecords);
     const body = serializeDocument(merged);
     // Each installation owns exactly one file; concurrent devices never overwrite each other.
     if (body !== previousOwn) {

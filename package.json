@@ -10,10 +10,12 @@
     "test:sync": "node tests/sync-browser.mjs",
     "test:personal": "node tests/personal-browser.mjs",
     "test:value": "node tests/value-browser.mjs",
-    "test:expiry": "node tests/expiry-browser.mjs"
+    "test:expiry": "node tests/expiry-browser.mjs",
+    "test:sites": "node tests/sites-browser.mjs"
   },
   "devDependencies": {
     "@rgrove/parse-xml": "5.0.0",
-    "playwright": "1.62.1"
+    "playwright": "1.62.1",
+    "tldts": "7.4.18"
   }
 }

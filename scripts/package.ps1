@@ -4,9 +4,9 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $manifest = Get-Content -LiteralPath (Join-Path $root "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 $files = @(
-    "manifest.json", "core.js", "background.js", "sync.js", "install-defaults.js", "insights.js",
+    "manifest.json", "core.js", "rules.js", "background.js", "sync.js", "install-defaults.js", "insights.js",
     "pause.html", "pause.js", "expiry.js", "timer.js",
-    "journal.html", "journal.js", "style.css",
+    "journal.html", "journal.js", "site-editor.js", "style.css",
     "README.md", "HANDOFF.md", "PRODUCT.md", "vendor"
 ) | ForEach-Object { Join-Path $root $_ }
 $output = Join-Path $root "artifacts"
@@ -32,7 +32,7 @@ if ($Personal) {
     Copy-Item -LiteralPath $archive -Destination $privateArchive -Force
     $zip = [IO.Compression.ZipFile]::Open($privateArchive, [IO.Compression.ZipArchiveMode]::Update)
     try {
-        $manifest.host_permissions = @($manifest.host_permissions) + "https://$($uri.Host)/*" | Select-Object -Unique
+        $manifest.host_permissions = @(@($manifest.host_permissions) + "https://$($uri.Host)/*" | Select-Object -Unique)
         $personalReadme = @"
 # Personal build
 

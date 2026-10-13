@@ -1,4 +1,5 @@
 (() => {
+  if (globalThis.PauseExpiryPrompt) return;
   function element(tag, text, attributes = {}) {
     const node = document.createElement(tag);
     if (text) node.textContent = text;

@@ -114,6 +114,27 @@ input[type="checkbox"] { width: 18px; height: 18px; flex: none; margin: 0; accen
 .site-row > span { color: #67786c; }
 .site-duration { text-align: right; font-variant-numeric: tabular-nums; }
 .decision-summary { margin-top: 24px; font-size: 14px; color: #536b5d; }
+.rules-form { max-width: 720px; margin-top: 24px; }
+.rule-list { border-top: 1px solid #d7dfd9; }
+.rule-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px 24px; padding:18px 0; border-bottom:1px solid #d7dfd9; }
+.rule-heading { grid-column:1; min-width:0; }
+.rule-domain { grid-column:1; font-size:13px; color:#566b5f; overflow-wrap:anywhere; }
+.rule-scope,.rule-permission { font-size:13px; color:#66756d; }
+.rule-permission { grid-column:2; grid-row:1; text-align:right; }
+.rule-row-actions { grid-column:2; grid-row:2 / span 3; display:flex; flex-wrap:wrap; justify-content:end; gap:4px 16px; }
+.rule-row input[data-field="name"] { grid-column:1; }
+.rule-row .check-label { overflow-wrap:anywhere; }
+.rule-row .text-button { font-size:13px; }
+.rule-add { margin-top:28px; display:grid; gap:10px; }
+.rule-add legend { font-size:16px; }
+.rule-add > label { font-size:13px; color:#65766b; }
+.inline-field { display:flex; gap:10px; align-items:stretch; min-width:0; }
+.inline-field input,.inline-field select { flex:1; min-width:0; }
+.inline-field button { flex:none; }
+.exception-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; padding:12px 0; border-bottom:1px solid #d7dfd9; }
+.exception-row p { margin:4px 0; font-size:13px; overflow-wrap:anywhere; }
+.rule-actions { display:flex; flex-wrap:wrap; gap:24px; margin-top:28px; }
+.trial-link { display:inline-block; color:#3e658d; margin-top:22px; }
 @media (max-width: 600px) {
   .topbar { padding: 16px 20px; min-height: 72px; gap: 12px; flex-wrap: wrap; }
   .brand { font-size: 14px; gap: 8px; }
@@ -129,4 +150,8 @@ input[type="checkbox"] { width: 18px; height: 18px; flex: none; margin: 0; accen
   .site-row > span:nth-child(2) { grid-column: 1; grid-row: 2; }
   .site-duration { grid-column: 2; grid-row: 1 / span 2; }
   .tabs { gap: 24px; }
+  .rule-row { gap:8px 12px; }
+  .rule-row-actions { grid-row:auto; grid-column:1 / -1; justify-content:start; }
+  .inline-field select { font-size:12px; }
+  .inline-field button { padding:8px 12px; }
 }

@@ -1,4 +1,6 @@
 (() => {
+  if (globalThis.__pauseTimerInstalled) return;
+  globalThis.__pauseTimerInstalled = true;
   let timer;
   let host;
   let deadline;
@@ -12,11 +14,14 @@
   let relatedTabs = 1;
   let expiryAction = "pause";
   let paused;
+  let active = true;
+  let syncVersion = 0;
   const prompt = new globalThis.PauseExpiryPrompt({
     resume: async input => {
       const response = await chrome.runtime.sendMessage({ type: "resumeVisit", ...input });
       if (!response?.ok) throw new Error(response?.error || "恢复失败，请重试。");
       if (!response.data) throw new Error("页面已切换，请刷新状态后重试。");
+      syncVersion++;
       applyState(response.data);
       tick();
     },
@@ -33,6 +38,13 @@
   });
 
   function applyState(data) {
+    if (data?.inactive) data = null;
+    active = Boolean(data);
+    if (active) timer ??= setInterval(tick, 500);
+    else {
+      clearInterval(timer);
+      timer = undefined;
+    }
     if (data?.paused) {
       paused = data;
       deadline = null;
@@ -182,20 +194,22 @@
   }
 
   async function sync(type = "timer") {
+    if (!active) return;
+    const version = ++syncVersion;
     lastSync = Date.now();
     try {
       const response = await chrome.runtime.sendMessage({
         type, foreground: document.visibilityState === "visible" && document.hasFocus()
       });
-      if (response?.ok) applyState(response.data);
+      // Null can mean navigation has not committed yet, not that this page is exempt.
+      if (version === syncVersion && response?.ok && response.data !== null) applyState(response.data);
     } catch {
-      clearInterval(timer);
-      host?.remove();
-      prompt.hide();
+      if (version === syncVersion) applyState(null);
     }
   }
 
   function tick() {
+    if (!active) return;
     if (Date.now() - lastSync > (document.hidden ? 15000 : 5000)) void sync();
     if (paused) { prompt.show(paused); return; }
     if (!deadline) return;
@@ -223,6 +237,10 @@
   window.addEventListener("blur", () => { void sync().then(tick); });
   window.addEventListener("resize", position);
   chrome.runtime.onMessage.addListener(message => {
+    if (message.type === "visitReleased") {
+      syncVersion++;
+      applyState(null);
+    }
     if (message.type === "visitPaused") void sync().then(tick);
   });
   void sync().then(tick);

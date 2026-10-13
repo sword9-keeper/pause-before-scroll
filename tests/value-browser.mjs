@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { setupSites } from "./browser-setup.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const profile = await mkdtemp(path.join(tmpdir(), "pause-value-"));
@@ -28,6 +29,7 @@ try {
     route.fulfill({ contentType: "text/html", body: "<!doctype html><h1>Browsing fixture</h1><p>Local test only.</p>" }));
   let worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
   const base = `chrome-extension://${new URL(worker.url()).host}`;
+  await setupSites(context, base);
   const stored = async () => worker.evaluate(async () => {
     const { records } = await chrome.storage.local.get("records");
     const { state } = await chrome.storage.session.get("state");
@@ -150,7 +152,7 @@ try {
     return visible.every((label, index) => index === 0 || label.left >= visible[index - 1].right);
   }), "30-day labels do not overlap on the narrowest viewport");
   await journal.locator("#manage-sites").click();
-  assert.ok(await journal.locator("#settings-panel").isVisible());
+  assert.ok(await journal.locator("#sites-panel").isVisible());
   await cdp.detach();
   assert.deepEqual(errors, []);
   console.log("PASS overview renders real outcomes, preserves legacy unknowns, and fits 1280/390/320 px");

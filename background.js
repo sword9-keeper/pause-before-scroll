@@ -1,5 +1,6 @@
-import { DEFAULT_SETTINGS, siteFor as matchSite, targetUrl, pauseTarget, validateGrant, validateSettings } from "./core.js";
-import { DEFAULT_SYNC_CONFIG, validateSyncConfig, permissionOrigin, nextRevision, compareRevision, mergeDocuments, syncWebDAV } from "./sync.js";
+import { DEFAULT_SETTINGS, siteFor as matchSite, targetUrl as parseTargetUrl, pauseTarget as parsePauseTarget, validateGrant, validateSettings } from "./core.js";
+import { DEFAULT_SYNC_CONFIG, SYNC_VERSION, validateSyncConfig, permissionOrigin, nextRevision, compareRevision, mergeDocuments, syncWebDAV } from "./sync.js";
+import { configuredSite, configuredSites, siteOrigin, matchesHost } from "./rules.js";
 import installDefaults from "./install-defaults.js";
 import { creditForeground, buildInsights } from "./insights.js";
 
@@ -16,9 +17,46 @@ let syncFlight;
 let syncController;
 let syncGeneration = 0;
 let lastActivityFlushAt = 0;
+let setupComplete = false;
+let siteAccess = [];
+let allowedSiteIds = new Set();
+let registrationError = "";
 
 function siteFor(raw) {
-  return matchSite(raw, settings?.enabledSites);
+  const site = matchSite(raw, settings || DEFAULT_SETTINGS);
+  return site && allowedSiteIds.has(site.id) ? site : null;
+}
+
+function targetUrl(raw) { return parseTargetUrl(raw, settings); }
+function pauseTarget(raw, page) { return parsePauseTarget(raw, page, settings); }
+
+function siteStatus() {
+  return { setupComplete, sites: siteAccess, error: registrationError };
+}
+
+async function refreshSiteAccess() {
+  siteAccess = await Promise.all(configuredSites(settings).map(async site => ({
+    ...site, granted: await chrome.permissions.contains({ origins: [siteOrigin(site)] })
+  })));
+  const active = siteAccess.filter(site => site.enabled && site.granted);
+  allowedSiteIds = new Set(active.map(site => site.id));
+  registrationError = "";
+  try {
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: ["flow-sites"] });
+    const matches = active.map(siteOrigin).sort();
+    if (!matches.length) {
+      if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: ["flow-sites"] });
+    } else if (!existing.length) {
+      await chrome.scripting.registerContentScripts([{
+        id: "flow-sites", matches, js: ["expiry.js", "timer.js"], runAt: "document_start", persistAcrossSessions: true
+      }]);
+    } else if (JSON.stringify([...existing[0].matches].sort()) !== JSON.stringify(matches)) {
+      await chrome.scripting.updateContentScripts([{ id: "flow-sites", matches }]);
+    }
+  } catch {
+    allowedSiteIds.clear();
+    registrationError = "网站脚本注册失败，暂未启用拦截，请重新保存网站配置。";
+  }
 }
 
 function run(work) {
@@ -47,7 +85,7 @@ function protectedRecordIds() {
 function syncDocument() {
   const protectedIds = protectedRecordIds();
   return {
-    app: "back-to-flow", schemaVersion: 1,
+    app: "back-to-flow", schemaVersion: SYNC_VERSION,
     settings: { revision: syncMeta.settingsRevision, value: settings },
     records: records.filter(record => !protectedIds.has(record.id) && !["active", "pending"].includes(record.outcome)),
     deletedIds: syncMeta.deletedIds
@@ -73,11 +111,25 @@ async function syncAlarm(reset = false) {
 }
 
 async function releaseDisabledSites() {
+  const released = new Set();
   for (const [id, paused] of Object.entries(state.paused)) {
-    if (!settings.enabledSites.includes(paused.siteId)) await releasePaused(Number(id));
+    const tab = await chrome.tabs.get(Number(id)).catch(() => null);
+    if (siteFor(navigations.get(Number(id))?.url || tab?.pendingUrl || tab?.url)?.id !== paused.siteId) {
+      await releasePaused(Number(id));
+      released.add(Number(id));
+    }
   }
   for (const grant of Object.values(state.grants)) {
-    if (!settings.enabledSites.includes(grant.siteId)) await finish(grant.tabId, "left");
+    const tab = await chrome.tabs.get(grant.tabId).catch(() => null);
+    if (siteFor(navigations.get(grant.tabId)?.url || tab?.pendingUrl || tab?.url)?.id !== grant.siteId) {
+      await finish(grant.tabId, "left");
+      released.add(grant.tabId);
+    }
+  }
+  for (const tabId of released) {
+    const documentId = navigations.get(tabId)?.documentId;
+    void chrome.tabs.sendMessage(tabId, { type: "visitReleased" },
+      documentId ? { documentId } : { frameId: 0 }).catch(() => {});
   }
   for (const [id, pending] of Object.entries(state.pending)) {
     if (siteFor(pending.target)) continue;
@@ -107,14 +159,20 @@ function startSync() {
         syncMeta.busy = true;
         syncMeta.lastError = "";
         await persist();
-        return structuredClone({ config: syncConfig, document: syncDocument(), deviceId: syncMeta.deviceId });
+        return structuredClone({ config: syncConfig, document: syncDocument(), deviceId: syncMeta.deviceId,
+          legacySettings: syncMeta.legacySettings });
       });
-      const merged = await syncWebDAV(snapshot.config, snapshot.document, { signal: syncController.signal, deviceId: snapshot.deviceId });
+      const merged = await syncWebDAV(snapshot.config, snapshot.document, {
+        signal: syncController.signal, deviceId: snapshot.deviceId, legacySettings: snapshot.legacySettings
+      });
       return await run(async () => {
         if (generation !== syncGeneration) throw new Error("连接配置已更改，本次同步结果未应用。");
         const current = syncDocument();
+        const adoptModern = snapshot.legacySettings && syncMeta.legacySettings &&
+          compareRevision(current.settings.revision, snapshot.document.settings.revision) === 0;
+        if (adoptModern) current.settings = merged.settings;
         const result = mergeDocuments(current, merged, true);
-        if (compareRevision(result.settings.revision, syncMeta.settingsRevision) > 0) {
+        if (adoptModern || compareRevision(result.settings.revision, syncMeta.settingsRevision) > 0) {
           if (JSON.stringify(settings) !== JSON.stringify(result.settings.value)) {
             syncMeta.settingsBackup = { value: structuredClone(settings), savedAt: Date.now() };
           }
@@ -130,8 +188,10 @@ function startSync() {
           syncMeta.deletedIds = result.deletedIds;
         }
         syncMeta.busy = false;
+        syncMeta.legacySettings = false;
         syncMeta.lastSuccessAt = Date.now();
         syncMeta.lastError = "";
+        await refreshSiteAccess();
         await releaseDisabledSites();
         await persist();
         return syncView();
@@ -457,19 +517,21 @@ function observeNavigation(details, phase) {
 async function bootstrap() {
   await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
   const [local, session] = await Promise.all([
-    chrome.storage.local.get(["settings", "records", "timerLayout", "syncConfig", "syncMeta"]),
+    chrome.storage.local.get(["settings", "records", "timerLayout", "syncConfig", "syncMeta", "setupComplete"]),
     chrome.storage.session.get("state")
   ]);
-  settings = {
+  setupComplete = local.setupComplete ?? Boolean(local.settings);
+  settings = validateSettings({
     ...DEFAULT_SETTINGS, ...local.settings,
     expiryAction: local.settings?.expiryAction ?? DEFAULT_SETTINGS.expiryAction,
-    enabledSites: local.settings?.enabledSites ?? DEFAULT_SETTINGS.enabledSites
-  };
+    enabledSites: local.settings?.enabledSites ?? (setupComplete ? DEFAULT_SETTINGS.enabledSites : [])
+  });
   const deviceId = local.syncMeta?.deviceId || crypto.randomUUID();
   syncMeta = {
     deviceId, settingsRevision: { at: local.settings ? 1 : 0, device: deviceId }, deletedIds: [],
     lastSuccessAt: null, lastError: "", settingsBackup: null,
-    ...local.syncMeta, busy: false
+    ...local.syncMeta, busy: false, protocolVersion: SYNC_VERSION,
+    legacySettings: local.syncMeta?.legacySettings ?? Boolean(local.settings && local.syncMeta?.protocolVersion !== SYNC_VERSION)
   };
   syncConfig = { ...DEFAULT_SYNC_CONFIG, ...(local.syncConfig || installDefaults) };
   if (!local.syncConfig && installDefaults) {
@@ -481,6 +543,8 @@ async function bootstrap() {
   state = session.state || state;
   state.sources ||= {};
   state.paused ||= {};
+  await chrome.storage.local.set({ setupComplete });
+  await refreshSiteAccess();
   const tabs = await chrome.tabs.query({});
   const liveIds = new Set(tabs.map(tab => tab.id));
   for (const id of Object.keys(state.paused)) {
@@ -542,9 +606,20 @@ async function bootstrap() {
 
 const ready = bootstrap();
 
-chrome.runtime.onInstalled.addListener(() => schedule(() => {}));
+chrome.runtime.onInstalled.addListener(details => schedule(async () => {
+  if (details.reason === "install" && !setupComplete) {
+    await chrome.tabs.create({ url: chrome.runtime.getURL("journal.html#sites") });
+  }
+}));
 chrome.runtime.onStartup.addListener(() => schedule(() => {}));
 chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
+for (const event of [chrome.permissions.onAdded, chrome.permissions.onRemoved]) {
+  event.addListener(() => schedule(async () => {
+    await refreshSiteAccess();
+    await releaseDisabledSites();
+    await persist();
+  }));
+}
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === "webdav-sync") {
     void ready.then(() => startSync()).catch(() => {});
@@ -639,8 +714,8 @@ async function isCurrentDocument(sender) {
   const currentUrl = tab.pendingUrl || tab.url;
   // A content script's sender URL can precede pushState; the document ID
   // still identifies the live document without trusting an old page.
-  if (siteFor(sender.url) && intent?.documentId && intent.documentId === sender.documentId &&
-      siteFor(intent.url)?.id === siteFor(sender.url).id && currentUrl === intent.url) return true;
+  if (configuredSite(sender.url, settings) && intent?.documentId && intent.documentId === sender.documentId &&
+      configuredSite(intent.url, settings)?.id === configuredSite(sender.url, settings).id && currentUrl === intent.url) return true;
   if (intent && intent.url !== sender.url) return false;
   if (currentUrl) return currentUrl === sender.url;
   // Without "tabs", Chrome omits extension-page URLs here. The authenticated
@@ -651,10 +726,11 @@ async function isCurrentDocument(sender) {
 async function handle(message, sender) {
   if (["timer", "expire", "timerLayout", "endVisit", "resumeVisit"].includes(message.type)) {
     const tabId = sender.tab?.id;
-    const site = siteFor(sender.url);
-    if (!matchSite(sender.url) || sender.frameId !== 0) throw new Error("无效的计时来源。");
+    if (sender.id !== chrome.runtime.id || sender.frameId !== 0) throw new Error("无效的计时来源。");
     if (!await isCurrentDocument(sender)) return null;
-    if (!site) return null;
+    const currentUrl = navigations.get(tabId)?.url || sender.url;
+    const site = siteFor(currentUrl);
+    if (!site) return ["timer", "expire"].includes(message.type) ? { inactive: true } : null;
     const paused = state.paused[tabId];
     if (paused) {
       if (paused.documentId && paused.documentId !== sender.documentId) return null;
@@ -704,7 +780,7 @@ async function handle(message, sender) {
       return pausedView(paused);
     }
     if (message.type === "resumeVisit") throw new Error("当前页面没有待恢复的浏览。");
-    if (!state.grants[tabId]) await inherit(tabId, sender.url);
+    if (!state.grants[tabId]) await inherit(tabId, currentUrl);
     const grant = state.grants[tabId];
     if (grant && grant.siteId === site.id && grant.expiresAt <= Date.now()) {
       await expireVisit(tabId);
@@ -713,7 +789,7 @@ async function handle(message, sender) {
     if (!grant || grant.siteId !== site.id) {
       if (message.type === "endVisit") return { ended: false };
       if (grant) await finish(tabId, "left");
-      await showPause(tabId, sender.url, navigations.get(tabId));
+      await showPause(tabId, currentUrl, navigations.get(tabId));
       return null;
     }
     if (message.type === "endVisit") {
@@ -788,7 +864,41 @@ async function handle(message, sender) {
     return null;
   }
   requirePage(sender, "journal.html");
-  if (message.type === "journal") return { settings, records };
+  if (message.type === "journal") return { settings, records, siteStatus: siteStatus() };
+  if (message.type === "siteStatus") return siteStatus();
+  if (message.type === "refreshSites") {
+    await refreshSiteAccess();
+    await releaseDisabledSites();
+    await persist();
+    return siteStatus();
+  }
+  if (message.type === "siteSettings") {
+    const patch = message.rules;
+    settings = validateSettings({ ...settings,
+      enabledSites: patch.enabledSites, customSites: patch.customSites, exceptions: patch.exceptions,
+      expiryAction: patch.expiryAction ?? settings.expiryAction
+    });
+    setupComplete = true;
+    syncMeta.legacySettings = false;
+    syncMeta.settingsRevision = nextRevision(syncMeta.settingsRevision, syncMeta.deviceId);
+    await chrome.storage.local.set({ setupComplete });
+    await refreshSiteAccess();
+    await releaseDisabledSites();
+    await persist();
+    return { settings, siteStatus: siteStatus() };
+  }
+  if (message.type === "revokeSite") {
+    const site = configuredSites(settings).find(item => item.id === message.siteId);
+    if (!site) throw new Error("网站规则已更新，请刷新后重试。");
+    if (syncConfig.url && matchesHost(new URL(syncConfig.url).hostname, site)) {
+      throw new Error("此站点权限还用于 WebDAV，请先修改或移除本机同步连接。");
+    }
+    await chrome.permissions.remove({ origins: [siteOrigin(site)] });
+    await refreshSiteAccess();
+    await releaseDisabledSites();
+    await persist();
+    return siteStatus();
+  }
   if (message.type === "syncStatus") return syncView();
   if (message.type === "syncSave") {
     const input = { ...message.config };
@@ -827,15 +937,19 @@ async function handle(message, sender) {
   if (message.type === "restoreSettings") {
     if (!syncMeta.settingsBackup) throw new Error("没有可恢复的设置。");
     settings = validateSettings(syncMeta.settingsBackup.value);
+    syncMeta.legacySettings = false;
     syncMeta.settingsBackup = null;
     syncMeta.settingsRevision = nextRevision(syncMeta.settingsRevision, syncMeta.deviceId);
+    await refreshSiteAccess();
     await releaseDisabledSites();
     await persist();
     return settings;
   }
   if (message.type === "settings") {
-    settings = validateSettings(message.settings);
+    settings = validateSettings({ ...settings, ...message.settings });
+    syncMeta.legacySettings = false;
     syncMeta.settingsRevision = nextRevision(syncMeta.settingsRevision, syncMeta.deviceId);
+    await refreshSiteAccess();
     await releaseDisabledSites();
     await persist();
     return settings;

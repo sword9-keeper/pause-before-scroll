@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { authorize, setupSites } from "./browser-setup.mjs";
 import { createDav } from "./dav-fixture.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -12,7 +13,7 @@ const extensionPath = path.join(work, "extension");
 const output = path.join(root, "test-results");
 await mkdir(extensionPath);
 await mkdir(output, { recursive: true });
-for (const file of ["manifest.json", "core.js", "background.js", "sync.js", "install-defaults.js", "insights.js", "vendor", "pause.html", "pause.js", "expiry.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
+for (const file of ["manifest.json", "core.js", "rules.js", "site-editor.js", "background.js", "sync.js", "install-defaults.js", "insights.js", "vendor", "pause.html", "pause.js", "expiry.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
   await cp(path.join(root, file), path.join(extensionPath, file), { recursive: true });
 }
 const manifest = JSON.parse(await readFile(path.join(extensionPath, "manifest.json"), "utf8"));
@@ -50,6 +51,7 @@ async function device(name) {
   });
   const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
   const extension = `chrome-extension://${new URL(worker.url()).host}`;
+  await setupSites(context, extension);
   const page = await context.newPage();
   await page.goto(`${extension}/journal.html`);
   await page.locator("#sync-tab").click();
@@ -75,9 +77,12 @@ try {
   await a.page.locator("#settings-tab").click();
   await a.page.locator('[name="expiry-action"][value="close"]').check();
   await a.page.locator("#quote-input").fill("Settings from device A");
-  await a.page.locator('[name="enabled-site"][value="xiaohongshu"]').uncheck();
   await a.page.locator('#settings-form [type="submit"]').click();
   await eventually(async () => (await a.page.locator("#status").textContent()) === "已保存", "settings");
+  await a.page.locator("#sites-tab").click();
+  await a.page.locator('[name="enabled-site"][value="xiaohongshu"]').uncheck();
+  await a.page.locator("#site-save").click();
+  await eventually(async () => (await a.page.locator("#status").textContent()) === "网站配置已保存", "site rules");
   // Create a completed visit through normal extension messages.
   await a.context.route("https://www.douyin.com/**", route => route.fulfill({ contentType: "text/html", body: "<h1>Fixture</h1>" }));
   await a.context.route("https://www.google.com/**", route => route.fulfill({ contentType: "text/html", body: "<h1>Exit</h1>" }));
@@ -122,6 +127,33 @@ try {
   await sync(a);
   assert.equal((await a.worker.evaluate(() => chrome.storage.local.get("records"))).records.length, 0);
   console.log("PASS deletion propagates and old local records do not reappear");
+  await a.page.locator("#sites-tab").click();
+  await authorize(a.context, a.page.url(), ["*://*.video.example.test/*"]);
+  await a.page.locator("#site-domain").fill("video.example.test");
+  // Save also includes a domain typed without pressing the separate Add button.
+  await a.page.locator("#site-save").click();
+  await eventually(async () => (await a.page.locator("#status").textContent()) === "网站配置已保存", "custom site");
+  await sync(a);
+  await sync(b);
+  await b.page.locator("#sites-tab").click();
+  const custom = b.page.locator('.rule-row[data-domain="video.example.test"]');
+  await eventually(async () => (await custom.locator(".rule-permission").textContent()) === "本机待授权", "independent device permission");
+  await b.context.route("https://video.example.test/**", route => route.fulfill({
+    contentType: "text/html", body: '<h1 id="fixture">Local custom-site fixture</h1>'
+  }));
+  const customPage = await b.context.newPage();
+  await customPage.goto("https://video.example.test/");
+  await customPage.locator("#fixture").waitFor();
+  assert.equal((await b.worker.evaluate(() => chrome.storage.local.get("records"))).records.length, 0);
+  await authorize(b.context, b.page.url(), ["*://*.video.example.test/*"]);
+  await custom.locator('[data-action="grant"]').click();
+  await eventually(async () => (await custom.locator(".rule-permission").textContent()) === "已授权", "local custom grant");
+  await customPage.reload().catch(error => {
+    if (!error.message.includes("ERR_ABORTED")) throw error;
+  });
+  await customPage.locator("#choose").waitFor();
+  await customPage.close();
+  console.log("PASS custom rules sync to an independent device without granting host access; only local authorization enables the gate");
   await b.page.reload();
   await b.page.locator("#sync-tab").click();
   await eventually(async () => (await b.page.locator("#sync-password").getAttribute("placeholder")).includes("已保存"), "saved password marker");

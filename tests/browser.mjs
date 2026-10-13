@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { setupSites } from "./browser-setup.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = path.join(root, "tests", "fixtures", "launcher");
@@ -50,6 +51,7 @@ try {
   const data = () => worker.evaluate(() => chrome.storage.local.get(["records", "settings"]));
   const session = () => worker.evaluate(() => chrome.storage.session.get("state"));
   await eventually(async () => (await data()).settings, "extension initialization");
+  await setupSites(context, extension);
 
   // Fixtures avoid credentials, third-party scripts, and live site dependencies.
   await context.route(/^https?:\/\/([^/]+\.)?(douyin|xiaohongshu|bilibili)\.com\//, route =>

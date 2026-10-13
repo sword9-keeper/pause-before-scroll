@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { DEFAULT_SETTINGS } from "../core.js";
+import { authorize } from "./browser-setup.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const currentManifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
@@ -53,7 +54,7 @@ try {
   }, { ...DEFAULT_SETTINGS, quote: "Upgrade setting preserved." });
 
   for (const file of [
-    "manifest.json", "background.js", "core.js", "sync.js", "install-defaults.js", "insights.js", "pause.html", "pause.js",
+    "manifest.json", "background.js", "core.js", "rules.js", "site-editor.js", "sync.js", "install-defaults.js", "insights.js", "pause.html", "pause.js",
     "expiry.js", "timer.js", "journal.html", "journal.js", "style.css", "vendor"
   ]) await cp(path.join(root, file), path.join(extensionPath, file), { recursive: true });
 
@@ -92,6 +93,8 @@ try {
   const permissions = await worker.evaluate(() => chrome.permissions.getAll());
   assert.ok(permissions.permissions.every(permission => !permission.startsWith("declarativeNetRequest")));
   console.log("PASS DNR permission is absent after reloading the same extension directory");
+  await authorize(context, extension);
+  await journal.evaluate(() => chrome.runtime.sendMessage({ type: "refreshSites" }));
 
   await context.route("https://www.google.com/**", route => route.fulfill({
     contentType: "text/html", body: '<a id="link" href="https://www.douyin.com/?upgrade=1">Open</a>'

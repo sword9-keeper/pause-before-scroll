@@ -1,4 +1,5 @@
-import { formatDuration } from "./core.js";
+import { formatDuration, SITES } from "./core.js";
+import { SiteEditor } from "./site-editor.js";
 import { permissionOrigin, validateSyncConfig } from "./sync.js";
 import { buildInsights, readableTime, compactTime, dayKey } from "./insights.js";
 
@@ -10,7 +11,8 @@ let syncDirty = false;
 let savedSync;
 let overviewDays = 7;
 let overviewCache;
-const views = ["overview", "records", "settings", "sync"];
+const views = ["overview", "sites", "records", "settings", "sync"];
+const siteEditor = new SiteEditor(request, settings => { if (!settingsDirty) fillSettings(settings); });
 const outcomes = {
   pending: "尚未选择", active: "进行中", declined: "选择离开",
   dismissed: "关闭确认页 / 离开", expired: "时间到", closed: "主动关页",
@@ -35,6 +37,11 @@ function elapsed(record) {
 }
 
 function render() {
+  const filter = $("#site-filter");
+  const selected = filter.value;
+  const sites = new Map([...SITES.map(site => [site.id, site.name]), ...records.map(record => [record.siteId, record.siteName])]);
+  filter.replaceChildren(new Option("全部网站", ""), ...[...sites].map(([id, name]) => new Option(name, id)));
+  filter.value = sites.has(selected) ? selected : "";
   renderOverview();
   const filtered = records.filter(record =>
     (!$("#date-filter").value || localDate(record.attemptedAt) === $("#date-filter").value) &&
@@ -77,7 +84,7 @@ function openView(name) {
   $("#status").textContent = "";
 }
 for (const name of views) $(`#${name}-tab`).addEventListener("click", () => openView(name));
-$("#manage-sites").addEventListener("click", () => openView("settings"));
+$("#manage-sites").addEventListener("click", () => openView("sites"));
 for (const button of document.querySelectorAll("[data-period]")) {
   button.addEventListener("click", () => {
     overviewDays = Number(button.dataset.period);
@@ -153,15 +160,14 @@ $("#settings-form").addEventListener("submit", async event => {
     await request("settings", { settings: {
       exitUrl: $("#exit-url").value, quote: $("#quote-input").value,
       reasons: $("#reasons-input").value.split(/\r?\n/), warningSeconds: Number($("#warning-input").value),
-      expiryAction: document.querySelector('[name="expiry-action"]:checked').value,
-      enabledSites: [...document.querySelectorAll('[name="enabled-site"]:checked')].map(input => input.value)
+      expiryAction: document.querySelector('[name="expiry-action"]:checked').value
     } });
     settingsDirty = false;
     $("#status").textContent = "已保存";
   } catch (error) { showError(error); }
 });
 $("#export").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify({ schemaVersion: 1, exportedAt: new Date().toISOString(), records }, null, 2)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ schemaVersion: 2, exportedAt: new Date().toISOString(), records }, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -182,6 +188,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.settings) {
     if (!settingsDirty) fillSettings(changes.settings.newValue);
     else $("#status").textContent = "设置已有更新；当前未保存的编辑仍保留。";
+    request("siteStatus").then(status => siteEditor.fill(changes.settings.newValue, status)).catch(showError);
   }
   if (area === "local" && (changes.syncMeta || changes.syncConfig)) {
     request("syncStatus").then(data => renderSync(data)).catch(showError);
@@ -199,9 +206,6 @@ function fillSettings(settings) {
   $("#warning-input").value = settings.warningSeconds;
   for (const input of document.querySelectorAll('[name="expiry-action"]')) {
     input.checked = input.value === (settings.expiryAction || "pause");
-  }
-  for (const input of document.querySelectorAll('[name="enabled-site"]')) {
-    input.checked = settings.enabledSites.includes(input.value);
   }
 }
 
@@ -281,6 +285,8 @@ $("#restore-settings").addEventListener("click", async () => {
 Promise.all([request("journal"), request("syncStatus")]).then(([data, sync]) => {
   records = data.records;
   fillSettings(data.settings);
+  siteEditor.fill(data.settings, data.siteStatus);
+  if (!data.siteStatus.setupComplete || location.hash === "#sites") openView("sites");
   renderSync(sync, true);
   render();
 }).catch(showError);

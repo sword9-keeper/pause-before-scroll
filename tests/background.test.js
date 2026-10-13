@@ -16,7 +16,7 @@ function event() {
 }
 
 async function harness(initial = {}) {
-  const local = structuredClone(initial.local || {});
+  const local = structuredClone({ ...(initial.fresh ? {} : { settings: DEFAULT_SETTINGS, setupComplete: true }), ...initial.local });
   const session = structuredClone(initial.session || {});
   const tabs = new Map((initial.tabs || [{ id: 42, url: "about:blank", documentId: "initial" }])
     .map(tab => [tab.id, { active: true, windowId: 1, ...structuredClone(tab) }]));
@@ -24,6 +24,11 @@ async function harness(initial = {}) {
   const updates = [];
   const removed = [];
   const notifications = [];
+  const created = [];
+  const granted = new Set(initial.origins || [
+    "*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*", "https://dav.example.test/*"
+  ]);
+  const scripts = new Map();
   let rejectUpdates = false;
   let document = 0;
   const area = data => ({
@@ -41,7 +46,21 @@ async function harness(initial = {}) {
   const alarms = new Map();
   const chrome = {
     storage: { local: area(local), session: area(session) },
-    permissions: { async contains() { return true; } },
+    permissions: {
+      onAdded: event(), onRemoved: event(),
+      async contains({ origins }) { return origins.every(origin => granted.has(origin)); },
+      async remove({ origins }) {
+        for (const origin of origins) granted.delete(origin);
+        this.onRemoved.emit({ origins });
+        return true;
+      }
+    },
+    scripting: {
+      async getRegisteredContentScripts() { return structuredClone([...scripts.values()]); },
+      async registerContentScripts(entries) { for (const entry of entries) scripts.set(entry.id, structuredClone(entry)); },
+      async updateContentScripts(entries) { for (const entry of entries) Object.assign(scripts.get(entry.id), structuredClone(entry)); },
+      async unregisterContentScripts({ ids }) { for (const id of ids) scripts.delete(id); }
+    },
     runtime: {
       id: "test", getURL: path => `${base}${path}`,
       onInstalled: event(), onStartup: event(), onMessage: event(),
@@ -66,6 +85,7 @@ async function harness(initial = {}) {
       onCreated: event(),
       onRemoved: event(),
       onActivated: event(),
+      async create({ url }) { created.push({ url }); return { id: 500, url }; },
       async query() { return structuredClone([...tabs.values()]); },
       async get(id) {
         if (!tabs.has(id)) throw new Error("No tab");
@@ -122,7 +142,7 @@ async function harness(initial = {}) {
   }
   await drain();
   return {
-    local, session, tabs, windows, updates, removed, notifications, chrome, sender, send, drain, navigate,
+    local, session, tabs, windows, updates, removed, notifications, created, granted, scripts, chrome, sender, send, drain, navigate,
     failUpdates(value) { rejectUpdates = value; }
   };
 }
@@ -461,8 +481,8 @@ test("sync applies settings and finished records without publishing active grant
   await h.drain();
   await h.send({ type: "syncSave", config: syncConfig });
   const finished = { id: "remote-record", siteId: "bilibili", siteName: "哔哩哔哩", attemptedAt: 1000, startedAt: null, endedAt: 2000, plannedMs: 0, elapsedMs: 0, reason: "", outcome: "declined" };
-  dav.files.set(`${syncConfig.url}devices-v1/device-remote.json`, JSON.stringify({
-    app: "back-to-flow", schemaVersion: 1,
+  dav.files.set(`${syncConfig.url}devices-v2/device-remote.json`, JSON.stringify({
+    app: "back-to-flow", schemaVersion: 2,
     settings: { revision: { at: Date.now(), device: "remote" }, value: { ...DEFAULT_SETTINGS, quote: "Synced setting" } },
     records: [finished], deletedIds: []
   }));
@@ -523,7 +543,7 @@ test("site toggles are persisted and disabling a site releases existing grants",
   await h.send({ type: "settings", settings: { ...DEFAULT_SETTINGS, enabledSites: ["bilibili"] } });
   assert.deepEqual(h.session.state.grants, {});
   assert.equal(h.local.records[0].outcome, "left");
-  assert.equal((await h.send({ type: "timer" }, h.sender())).data, null);
+  assert.deepEqual((await h.send({ type: "timer" }, h.sender())).data, { inactive: true });
   await h.navigate("https://www.douyin.com/video/next");
   assert.equal(h.local.records.length, 1);
   await h.navigate("https://www.bilibili.com/");
@@ -857,7 +877,7 @@ test("worker recovery preserves a paused page and does not create a fresh attemp
   await h.send({ type: "settings", settings: { ...DEFAULT_SETTINGS, enabledSites: [] } });
   assert.deepEqual(h.session.state.paused, {});
   assert.equal(h.tabs.get(42).mutedInfo.muted, false);
-  assert.equal((await h.send({ type: "timer" }, h.sender())).data, null);
+  assert.deepEqual((await h.send({ type: "timer" }, h.sender())).data, { inactive: true });
 });
 
 test("expiry preferences are latched at the start and cannot silently change an active visit", async t => {
@@ -927,4 +947,121 @@ test("fractional custom minutes produce integer-millisecond records before and a
   const recordId = h.session.state.paused[42].recordId;
   await h.send({ type: "resumeVisit", recordId, minutes: 0.123456, reason: "again" }, h.sender());
   assert.equal(h.local.records[1].plannedMs, 7407);
+});
+
+test("fresh installation opens setup once and does not intervene before site selection", async () => {
+  const h = await harness({ fresh: true, origins: [] });
+  assert.deepEqual(h.local.settings.enabledSites, []);
+  assert.equal(h.local.setupComplete, false);
+  assert.equal(h.scripts.size, 0);
+  h.chrome.runtime.onInstalled.emit({ reason: "install" });
+  await h.drain();
+  assert.deepEqual(h.created, [{ url: `${base}journal.html#sites` }]);
+  await h.navigate("https://www.douyin.com/");
+  assert.equal(h.local.records.length, 0);
+  assert.equal(h.updates.length, 0);
+  await h.send({ type: "siteSettings", rules: { ...DEFAULT_SETTINGS, enabledSites: [] } });
+  assert.equal(h.local.setupComplete, true);
+  h.chrome.runtime.onInstalled.emit({ reason: "update" });
+  await h.drain();
+  assert.equal(h.created.length, 1);
+});
+
+test("synced custom rules wait for this device's permission and register only their scoped host", async () => {
+  const rules = { ...DEFAULT_SETTINGS, enabledSites: [], customSites: [
+    { domain: "video.example.test", name: "Videos", enabled: true, includeSubdomains: false }
+  ] };
+  const h = await harness({ local: { settings: rules }, origins: [] });
+  assert.equal((await h.send({ type: "siteStatus" })).data.sites.at(-1).granted, false);
+  await h.navigate("https://video.example.test/");
+  assert.equal(h.updates.length, 0);
+  h.granted.add("*://video.example.test/*");
+  h.chrome.permissions.onAdded.emit({});
+  await h.drain();
+  assert.deepEqual(h.scripts.get("flow-sites").matches, ["*://video.example.test/*"]);
+  await h.navigate("https://video.example.test/watch");
+  assert.ok(h.tabs.get(42).url.startsWith(`${base}pause.html#`));
+  await h.send({ type: "continue", minutes: 5, reason: "custom" }, h.sender());
+  await h.drain();
+  assert.equal(h.local.records[0].siteId, "custom:video.example.test");
+  const updates = h.updates.length;
+  h.granted.delete("*://video.example.test/*");
+  h.chrome.permissions.onRemoved.emit({});
+  await h.drain();
+  assert.deepEqual(h.session.state.grants, {});
+  assert.equal(h.local.records[0].outcome, "left");
+  assert.equal(h.updates.length, updates);
+  assert.equal(h.removed.length, 0);
+  assert.equal(h.scripts.size, 0);
+});
+
+test("SPA transitions into and out of exceptions use the live URL, never the injection URL", async () => {
+  const h = await harness({ local: { settings: { ...DEFAULT_SETTINGS, exceptions: [
+    { mode: "path", url: "https://www.douyin.com/learning" }
+  ] } } });
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "learn" }, h.sender());
+  await h.drain();
+  const original = h.sender();
+  h.tabs.get(42).url = "https://www.douyin.com/learning/video";
+  h.chrome.webNavigation.onHistoryStateUpdated.emit({
+    tabId: 42, frameId: 0, url: h.tabs.get(42).url, documentId: original.documentId
+  });
+  await h.drain();
+  const updates = h.updates.length;
+  assert.deepEqual((await h.send({ type: "timer" }, original)).data, { inactive: true });
+  assert.equal(h.updates.length, updates);
+  assert.equal(h.local.records[0].outcome, "left");
+  h.tabs.get(42).url = "https://www.douyin.com/shorts";
+  h.chrome.webNavigation.onHistoryStateUpdated.emit({
+    tabId: 42, frameId: 0, url: h.tabs.get(42).url, documentId: original.documentId
+  });
+  await h.drain();
+  assert.equal(h.tabs.get(42).url, `${base}pause.html#https://www.douyin.com/shorts`);
+  assert.equal(h.local.records.length, 2);
+});
+
+test("adding an exception releases an active visit without closing or reloading its document", async () => {
+  const h = await harness();
+  await h.navigate("https://www.bilibili.com/list/ml123?bvid=one");
+  await h.send({ type: "continue", minutes: 5, reason: "learn" }, h.sender());
+  await h.drain();
+  const document = h.sender().documentId;
+  const updates = h.updates.length;
+  await h.send({ type: "siteSettings", rules: { ...DEFAULT_SETTINGS,
+    exceptions: [{ mode: "path", url: "https://www.bilibili.com/list/ml123" }] } });
+  assert.equal(h.updates.length, updates);
+  assert.equal(h.sender().documentId, document);
+  assert.deepEqual(h.session.state.grants, {});
+  assert.equal(h.removed.length, 0);
+});
+
+test("registration failure is visible and never leaves untimed automatic blocking enabled", async () => {
+  const h = await harness();
+  h.chrome.scripting.updateContentScripts = async () => { throw new Error("Test registration failure"); };
+  const response = await h.send({ type: "siteSettings", rules: { ...DEFAULT_SETTINGS, enabledSites: ["douyin"] } });
+  assert.match(response.data.siteStatus.error, /注册失败/);
+  await h.navigate("https://www.douyin.com/");
+  assert.equal(h.local.records.length, 0);
+});
+
+test("upgrading sync adopts modern rule settings even when the saved legacy revision is newer", async t => {
+  const dav = createDav();
+  t.mock.method(globalThis, "fetch", dav.fetcher);
+  const h = await harness({ local: {
+    settings: { ...DEFAULT_SETTINGS, quote: "old device edit" },
+    syncMeta: { deviceId: "old", settingsRevision: { at: 1000, device: "old" } }, syncConfig
+  } });
+  const modern = { ...DEFAULT_SETTINGS, quote: "modern",
+    customSites: [{ domain: "video.example.test", name: "Videos", enabled: true, includeSubdomains: true }] };
+  dav.files.set(`${syncConfig.url}devices-v2/device-modern.json`, JSON.stringify({
+    app: "back-to-flow", schemaVersion: 2, settings: { revision: { at: 10, device: "modern" }, value: modern },
+    records: [], deletedIds: []
+  }));
+  assert.equal((await h.send({ type: "syncNow" })).ok, true);
+  assert.equal(h.local.settings.customSites[0].domain, "video.example.test");
+  assert.equal(h.local.settings.quote, "modern");
+  assert.equal(h.local.syncMeta.settingsBackup.value.quote, "old device edit");
+  assert.equal(h.local.syncMeta.legacySettings, false);
+  assert.equal((await h.send({ type: "siteStatus" })).data.sites.at(-1).granted, false);
 });

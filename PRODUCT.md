@@ -48,7 +48,7 @@ established by shipping features or passing automated tests.
 | Honest foreground observations | Implemented and technically verified | Unit invariants, sleep-gap and worker-recovery checks; real Chromium focus/background checks; sync preservation |
 | Intentional early exit | Implemented and technically verified | Browser stop/cancel/confirm checks; unit stale-document, unrelated-tab and shared-grant checks |
 | Understandable personal overview | Implemented and technically verified | Unit day aggregation and legacy-unknown checks; real Chromium 1280/390/320 px screenshots; macOS user validation pending |
-| First-run setup and custom sites | Not started | Fresh-profile task completion; permissions and exceptions tests |
+| First-run setup and custom sites | Implemented and technically verified | Fresh-profile first setup, narrow host grants, exact/path exceptions, SPA, permission-release preservation, independent-device authorization, and 1280/390/320 px checks; real permission-dialog, real-site and macOS validation pending |
 | Humane end-of-visit flow | Implemented and technically verified | Chromium draft/document preservation, media pause, fullscreen exit, keyboard/narrow layouts; unit race/mute/recovery checks; real-site and macOS validation pending |
 | Opt-in efficacy pilot | Not started | Protocol, consenting users, baseline/intervention data, dropout and adverse effects |
 | Public distribution | Not started | Store-ready artifact, privacy policy, signed-off listing, real macOS check |

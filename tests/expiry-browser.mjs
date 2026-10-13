@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { setupSites } from "./browser-setup.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const profile = await mkdtemp(path.join(tmpdir(), "pause-expiry-"));
@@ -35,6 +36,7 @@ try {
   }));
   let worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
   const base = `chrome-extension://${new URL(worker.url()).host}`;
+  await setupSites(context, base);
   const data = () => worker.evaluate(() => chrome.storage.local.get(["records", "settings"]));
   const state = async () => (await worker.evaluate(() => chrome.storage.session.get("state"))).state;
   async function enter() {
@@ -204,9 +206,9 @@ try {
   await full.close();
   console.log("PASS expiry exits document fullscreen and an explicit reload returns to the normal entry decision");
 
-  await journal.locator("#settings-tab").click();
+  await journal.locator("#sites-tab").click();
   await journal.locator('[name="enabled-site"][value="douyin"]').uncheck();
-  await journal.locator('#settings-form [type="submit"]').click();
+  await journal.locator("#site-save").click();
   await eventually(async () => Object.keys((await state()).grants).length === 0, "disabled site releases recovery");
   await page.locator("#pause-before-scroll-timer").waitFor({ state: "detached" });
   assert.ok(!page.isClosed());
