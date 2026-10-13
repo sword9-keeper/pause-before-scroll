@@ -240,12 +240,12 @@ try {
   passed("JSON export downloads locally");
   await journal.locator("#settings-tab").click();
   await journal.locator("#exit-url").fill("https://www.douyin.com/");
-  await journal.locator('[type="submit"]').click();
+  await journal.locator('#settings-form [type="submit"]').click();
   await eventually(async () => (await journal.locator("#status").textContent()).includes("非受限"), "loop prevention");
   assert.equal((await data()).settings.exitUrl, "https://www.google.com/");
   await journal.locator("#exit-url").fill("https://www.chatgpt.com/");
   await journal.locator("#quote-input").fill("今天只做这一件事。");
-  await journal.locator('[type="submit"]').click();
+  await journal.locator('#settings-form [type="submit"]').click();
   await eventually(async () => (await journal.locator("#status").textContent()) === "已保存", "settings persisted");
   assert.equal((await data()).settings.exitUrl, "https://www.chatgpt.com/");
   passed("settings persist and reject exit redirect loops");

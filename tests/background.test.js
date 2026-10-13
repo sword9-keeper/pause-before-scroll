@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_SETTINGS } from "../core.js";
+import { createDav } from "./dav-fixture.mjs";
 
 let instance = 0;
 const base = "chrome-extension://test/";
@@ -28,7 +29,8 @@ async function harness(initial = {}) {
       return structuredClone(Object.fromEntries(
         (Array.isArray(keys) ? keys : [keys]).map(key => [key, data[key]])));
     },
-    async set(values) { Object.assign(data, structuredClone(values)); }
+    async set(values) { Object.assign(data, structuredClone(values)); },
+    async setAccessLevel() {}
   });
   const webNavigation = Object.fromEntries([
     "onBeforeNavigate", "onCommitted", "onCompleted", "onHistoryStateUpdated",
@@ -37,6 +39,7 @@ async function harness(initial = {}) {
   const alarms = new Map();
   const chrome = {
     storage: { local: area(local), session: area(session) },
+    permissions: { async contains() { return true; } },
     runtime: {
       id: "test", getURL: path => `${base}${path}`,
       onInstalled: event(), onStartup: event(), onMessage: event(),
@@ -45,6 +48,7 @@ async function harness(initial = {}) {
     action: { onClicked: event() },
     alarms: {
       onAlarm: event(),
+      async get(name) { return alarms.get(name); },
       async create(name, value) { alarms.set(name, value); },
       async clear(name) { return alarms.delete(name); }
     },
@@ -406,4 +410,168 @@ test("a blank child loses inheritance after visiting an unrelated site", async (
   }
   assert.equal(h.session.state.grants[43], undefined);
   assert.ok(h.tabs.get(43).url.startsWith(`${base}pause.html#`));
+});
+
+const syncConfig = {
+  enabled: true, url: "https://dav.example.test/back-to-flow/",
+  username: "test", password: "test-only-secret", syncRecords: true
+};
+
+test("sync credentials are hidden from the journal and rejected from content messages", async t => {
+  t.mock.method(console, "error", () => {});
+  const h = await harness();
+  assert.equal((await h.send({ type: "syncSave", config: syncConfig })).ok, true);
+  assert.equal(h.local.syncConfig.password, syncConfig.password);
+  const view = await h.send({ type: "syncStatus" });
+  assert.equal(view.data.config.passwordSaved, true);
+  assert.ok(!JSON.stringify(view).includes(syncConfig.password));
+  assert.ok(!JSON.stringify(await h.send({ type: "journal" })).includes(syncConfig.password));
+  h.tabs.get(42).url = "https://www.douyin.com/";
+  assert.equal((await h.send({ type: "syncStatus" }, h.sender())).ok, false);
+  assert.equal((await h.send({ type: "syncNow" }, h.sender())).ok, false);
+  assert.equal((await h.send({ type: "syncSave", config: { ...syncConfig, password: "" } })).ok, true);
+  assert.equal(h.local.syncConfig.password, syncConfig.password);
+  await h.send({ type: "syncForget" });
+  assert.equal(h.local.syncConfig.password, "");
+});
+
+test("sync applies settings and finished records without publishing active grants", async t => {
+  const dav = createDav();
+  t.mock.method(globalThis, "fetch", dav.fetcher);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "local active" }, h.sender());
+  await h.drain();
+  await h.send({ type: "syncSave", config: syncConfig });
+  const finished = { id: "remote-record", siteId: "bilibili", siteName: "哔哩哔哩", attemptedAt: 1000, startedAt: null, endedAt: 2000, plannedMs: 0, elapsedMs: 0, reason: "", outcome: "declined" };
+  dav.files.set(`${syncConfig.url}devices-v1/device-remote.json`, JSON.stringify({
+    app: "back-to-flow", schemaVersion: 1,
+    settings: { revision: { at: Date.now(), device: "remote" }, value: { ...DEFAULT_SETTINGS, quote: "Synced setting" } },
+    records: [finished], deletedIds: []
+  }));
+  assert.equal((await h.send({ type: "syncNow" })).ok, true);
+  assert.equal(h.local.settings.quote, "Synced setting");
+  assert.equal(h.local.records.length, 2);
+  assert.equal(h.session.state.grants[42].recordId, h.local.records.find(record => record.outcome === "active").id);
+  const uploaded = JSON.parse([...dav.files.entries()].find(([url]) => !url.endsWith("device-remote.json"))[1]);
+  assert.deepEqual(uploaded.records, [finished]);
+  assert.ok(!JSON.stringify(uploaded).includes(syncConfig.password));
+  await h.send({ type: "clear" });
+  assert.deepEqual(h.local.syncMeta.deletedIds, ["remote-record"]);
+  assert.equal(h.local.records[0].outcome, "active");
+  await h.send({ type: "syncNow" });
+  assert.equal(h.local.records.length, 1);
+  const revision = h.local.syncMeta.settingsRevision.at;
+  assert.equal((await h.send({ type: "restoreSettings" })).ok, true);
+  assert.equal(h.local.settings.quote, DEFAULT_SETTINGS.quote);
+  assert.ok(h.local.syncMeta.settingsRevision.at > revision);
+});
+
+test("an in-flight network request does not block expiry or overwrite later local edits", async t => {
+  const dav = createDav();
+  let release;
+  let started;
+  const firstRequest = new Promise(resolve => { started = resolve; });
+  const barrier = new Promise(resolve => { release = resolve; });
+  let first = true;
+  t.mock.method(globalThis, "fetch", async (...args) => {
+    if (first) { first = false; started(); await barrier; }
+    return dav.fetcher(...args);
+  });
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "expiry" }, h.sender());
+  await h.drain();
+  await h.send({ type: "syncSave", config: syncConfig });
+  const pendingSync = h.send({ type: "syncNow" });
+  await firstRequest;
+  now += 7000;
+  h.chrome.alarms.onAlarm.emit({ name: "expire:42" });
+  await h.drain();
+  assert.deepEqual(h.removed, [42]);
+  await h.send({ type: "settings", settings: { ...DEFAULT_SETTINGS, quote: "Edited during fetch" } });
+  release();
+  assert.equal((await pendingSync).ok, true);
+  assert.equal(h.local.settings.quote, "Edited during fetch");
+  assert.equal(h.local.records[0].outcome, "expired");
+});
+
+test("site toggles are persisted and disabling a site releases existing grants", async () => {
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "test" }, h.sender());
+  await h.drain();
+  await h.send({ type: "settings", settings: { ...DEFAULT_SETTINGS, enabledSites: ["bilibili"] } });
+  assert.deepEqual(h.session.state.grants, {});
+  assert.equal(h.local.records[0].outcome, "left");
+  assert.equal((await h.send({ type: "timer" }, h.sender())).data, null);
+  await h.navigate("https://www.douyin.com/video/next");
+  assert.equal(h.local.records.length, 1);
+  await h.navigate("https://www.bilibili.com/");
+  assert.equal(h.local.records.length, 2);
+  await h.send({ type: "settings", settings: { ...DEFAULT_SETTINGS, enabledSites: [] } });
+  await h.drain();
+  assert.equal(h.tabs.get(42).url, "https://www.bilibili.com/");
+  assert.deepEqual(h.session.state.pending, {});
+});
+
+test("record opt-out keeps local records and clear markers away from WebDAV", async t => {
+  const dav = createDav();
+  t.mock.method(globalThis, "fetch", dav.fetcher);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "leave" }, h.sender());
+  await h.drain();
+  await h.send({ type: "syncSave", config: { ...syncConfig, syncRecords: false } });
+  assert.equal((await h.send({ type: "syncNow" })).ok, true);
+  assert.equal(h.local.records.length, 1);
+  assert.equal(JSON.parse([...dav.files.values()][0]).records.length, 0);
+  await h.send({ type: "clear" });
+  await h.send({ type: "syncNow" });
+  assert.equal(JSON.parse([...dav.files.values()][0]).deletedIds.length, 0);
+});
+
+test("changing connection while syncing cancels old results without applying remote settings", async t => {
+  const dav = createDav();
+  let release;
+  let started;
+  const firstRequest = new Promise(resolve => { started = resolve; });
+  const barrier = new Promise(resolve => { release = resolve; });
+  t.mock.method(globalThis, "fetch", async (...args) => {
+    started();
+    await barrier;
+    return dav.fetcher(...args);
+  });
+  const h = await harness();
+  await h.send({ type: "syncSave", config: syncConfig });
+  const syncing = h.send({ type: "syncNow" });
+  await firstRequest;
+  await h.send({ type: "syncForget" });
+  release();
+  assert.equal((await syncing).ok, false);
+  assert.equal(h.local.syncConfig.enabled, false);
+  assert.equal(h.local.syncMeta.lastError, "");
+  assert.equal(dav.files.size, 0);
+});
+
+test("missing optional host permission prevents sync without issuing a request", async t => {
+  t.mock.method(console, "error", () => {});
+  const fetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("Must not fetch"); });
+  const h = await harness();
+  await h.send({ type: "syncSave", config: syncConfig });
+  h.chrome.permissions.contains = async () => false;
+  const response = await h.send({ type: "syncNow" });
+  assert.equal(response.ok, false);
+  assert.match(response.error, /权限/);
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("legacy settings are seeded above fresh defaults and sync remains opt-in", async () => {
+  const h = await harness({ local: { settings: { ...DEFAULT_SETTINGS, enabledSites: undefined, quote: "Legacy quote" } } });
+  assert.equal(h.local.syncMeta.settingsRevision.at, 1);
+  assert.equal(h.local.settings.quote, "Legacy quote");
+  assert.deepEqual(h.local.settings.enabledSites, DEFAULT_SETTINGS.enabledSites);
+  assert.equal((await h.send({ type: "syncStatus" })).data.config.enabled, false);
 });

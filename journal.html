@@ -10,12 +10,13 @@
 <body>
   <header class="topbar">
     <span class="brand"><span class="mark" aria-hidden="true">Ⅱ</span>刷之前想一下</span>
-    <span class="local-label">仅保存在本地 · <span id="version"></span></span>
+    <span class="local-label"><span id="data-mode">仅保存在本地</span> · <span id="version"></span></span>
   </header>
   <main class="journal-main">
     <nav class="tabs" aria-label="页面">
       <button id="records-tab" class="tab active" aria-pressed="true">记录</button>
       <button id="settings-tab" class="tab" aria-pressed="false">设置</button>
+      <button id="sync-tab" class="tab" aria-pressed="false">同步</button>
     </nav>
     <section id="records-panel">
       <div class="section-heading"><h1>浏览记录</h1><button id="export" class="secondary">导出 JSON</button></div>
@@ -47,9 +48,39 @@
         <textarea id="reasons-input" rows="5"></textarea>
         <label for="warning-input">提前提醒 · 秒</label>
         <input id="warning-input" type="number" min="1" max="300" required>
-        <fieldset class="sites"><legend>当前限制</legend><span>抖音 · 全部</span><span>小红书 · 全部</span><span>哔哩哔哩 · 全部</span></fieldset>
+        <fieldset class="sites"><legend>受限网站 · 含子域名</legend>
+          <label class="check-label"><input type="checkbox" name="enabled-site" value="douyin" checked>抖音</label>
+          <label class="check-label"><input type="checkbox" name="enabled-site" value="xiaohongshu" checked>小红书</label>
+          <label class="check-label"><input type="checkbox" name="enabled-site" value="bilibili" checked>哔哩哔哩</label>
+        </fieldset>
         <button class="primary" type="submit">保存设置</button>
       </form>
+    </section>
+    <section id="sync-panel" hidden>
+      <h1>WebDAV 同步</h1>
+      <form id="sync-form" class="settings-form">
+        <label class="check-label"><input id="sync-enabled" type="checkbox">启用自动同步 · 每 5 分钟</label>
+        <label for="sync-url">同步目录 · HTTPS</label>
+        <input id="sync-url" type="url" placeholder="https://dav.example.com/webdav/back-to-flow/" autocomplete="off" spellcheck="false">
+        <label for="sync-username">用户名</label>
+        <input id="sync-username" autocomplete="off" maxlength="256" spellcheck="false">
+        <label for="sync-password">密码</label>
+        <input id="sync-password" type="password" autocomplete="new-password" maxlength="1024">
+        <label class="check-label"><input id="sync-records" type="checkbox" checked>同步已结束的记录（含用途）</label>
+        <button id="sync-save" class="primary" type="submit">保存连接</button>
+      </form>
+      <div class="sync-summary">
+        <dl class="sync-details">
+          <div><dt>同步状态</dt><dd id="sync-state">未启用</dd></div>
+          <div><dt>最近成功</dt><dd id="sync-last-success">尚未同步</dd></div>
+        </dl>
+        <p id="sync-error" role="status"></p>
+        <div class="sync-actions">
+          <button id="sync-now" class="secondary" type="button" disabled>立即同步</button>
+          <button id="sync-forget" class="text-button danger" type="button">移除本机连接</button>
+          <button id="restore-settings" class="text-button" type="button" hidden>恢复同步前设置</button>
+        </div>
+      </div>
     </section>
     <p id="status" role="status"></p>
   </main>

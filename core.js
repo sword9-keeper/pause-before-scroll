@@ -8,15 +8,16 @@ export const DEFAULT_SETTINGS = {
   exitUrl: "https://www.google.com/",
   quote: "什么都无法舍弃的人，什么都无法做到。",
   reasons: ["查找资料", "看指定内容", "休息一下"],
-  warningSeconds: 60
+  warningSeconds: 60,
+  enabledSites: SITES.map(site => site.id)
 };
 
-export function siteFor(raw) {
+export function siteFor(raw, enabledSites = DEFAULT_SETTINGS.enabledSites) {
   try {
     const url = new URL(raw);
     if (!["https:", "http:"].includes(url.protocol)) return null;
-    return SITES.find(site => url.hostname === site.domain ||
-      url.hostname.endsWith(`.${site.domain}`)) || null;
+    return SITES.find(site => enabledSites.includes(site.id) && (url.hostname === site.domain ||
+      url.hostname.endsWith(`.${site.domain}`))) || null;
   } catch {
     return null;
   }
@@ -29,6 +30,10 @@ export function targetUrl(raw) {
 }
 
 export function validateSettings(input) {
+  const enabledSites = input.enabledSites ?? DEFAULT_SETTINGS.enabledSites;
+  if (!Array.isArray(enabledSites) || enabledSites.some(id => !SITES.some(site => site.id === id))) {
+    throw new Error("网站规则无效。");
+  }
   const url = new URL(input.exitUrl);
   if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || siteFor(url.href)) {
     throw new Error("离开网址必须是非受限网站的 HTTP 或 HTTPS 地址。");
@@ -43,7 +48,7 @@ export function validateSettings(input) {
   if (!Number.isInteger(warningSeconds) || warningSeconds < 1 || warningSeconds > 300) {
     throw new Error("提前提醒时间应为 1 至 300 秒。");
   }
-  return { exitUrl: url.href, quote, reasons, warningSeconds };
+  return { exitUrl: url.href, quote, reasons, warningSeconds, enabledSites: SITES.map(site => site.id).filter(id => enabledSites.includes(id)) };
 }
 
 export function validateGrant(minutes, reason) {

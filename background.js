@@ -1,4 +1,6 @@
-import { DEFAULT_SETTINGS, siteFor, targetUrl, pauseTarget, validateGrant, validateSettings } from "./core.js";
+import { DEFAULT_SETTINGS, siteFor as matchSite, targetUrl, pauseTarget, validateGrant, validateSettings } from "./core.js";
+import { DEFAULT_SYNC_CONFIG, validateSyncConfig, permissionOrigin, nextRevision, compareRevision, mergeDocuments, syncWebDAV } from "./sync.js";
+import installDefaults from "./install-defaults.js";
 
 const pausePage = chrome.runtime.getURL("pause.html");
 let state = { grants: {}, pending: {} };
@@ -7,6 +9,15 @@ let records = [];
 let timerLayout = { x: 1, y: 0, collapsed: false };
 let queue = Promise.resolve();
 const navigations = new Map();
+let syncConfig = { ...DEFAULT_SYNC_CONFIG };
+let syncMeta;
+let syncFlight;
+let syncController;
+let syncGeneration = 0;
+
+function siteFor(raw) {
+  return matchSite(raw, settings?.enabledSites);
+}
 
 function run(work) {
   const task = queue.then(() => ready).then(work);
@@ -20,7 +31,119 @@ function schedule(work) {
 
 async function persist() {
   await chrome.storage.session.set({ state });
-  await chrome.storage.local.set({ records, settings });
+  await chrome.storage.local.set({ records, settings, syncMeta });
+}
+
+function protectedRecordIds() {
+  return new Set([
+    ...Object.values(state.grants).map(grant => grant.recordId),
+    ...Object.values(state.pending).map(pending => pending.recordId)
+  ]);
+}
+
+function syncDocument() {
+  const protectedIds = protectedRecordIds();
+  return {
+    app: "back-to-flow", schemaVersion: 1,
+    settings: { revision: syncMeta.settingsRevision, value: settings },
+    records: records.filter(record => !protectedIds.has(record.id) && !["active", "pending"].includes(record.outcome)),
+    deletedIds: syncMeta.deletedIds
+  };
+}
+
+function syncView() {
+  const { password, ...config } = syncConfig;
+  return {
+    config: { ...config, passwordSaved: Boolean(password) },
+    status: {
+      busy: syncMeta.busy, lastSuccessAt: syncMeta.lastSuccessAt,
+      lastError: syncMeta.lastError, hasSettingsBackup: Boolean(syncMeta.settingsBackup)
+    }
+  };
+}
+
+async function syncAlarm(reset = false) {
+  if (reset || !syncConfig.enabled) await chrome.alarms.clear("webdav-sync");
+  if (syncConfig.enabled && !await chrome.alarms.get("webdav-sync")) {
+    await chrome.alarms.create("webdav-sync", { delayInMinutes: 0.5, periodInMinutes: 5 });
+  }
+}
+
+async function releaseDisabledSites() {
+  for (const grant of Object.values(state.grants)) {
+    if (!settings.enabledSites.includes(grant.siteId)) await finish(grant.tabId, "left");
+  }
+  for (const [id, pending] of Object.entries(state.pending)) {
+    if (siteFor(pending.target)) continue;
+    const tabId = Number(id);
+    abandon(tabId);
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const current = navigations.get(tabId)?.url || tab?.pendingUrl || tab?.url;
+    if (current === `${pausePage}#${pending.target}`) {
+      await chrome.tabs.update(tabId, { url: pending.target }).catch(() => {});
+    }
+  }
+}
+
+function startSync() {
+  if (syncFlight) return syncFlight;
+  // Fetch stays outside the navigation queue so an unavailable server cannot delay expiry.
+  syncFlight = (async () => {
+    let generation;
+    try {
+      const snapshot = await run(async () => {
+        if (!syncConfig.enabled) throw new Error("请先启用并保存 WebDAV 同步。");
+        if (!await chrome.permissions.contains({ origins: [permissionOrigin(syncConfig.url)] })) {
+          throw new Error("WebDAV 站点访问权限已取消，请重新保存连接并授权。");
+        }
+        generation = syncGeneration;
+        syncController = new AbortController();
+        syncMeta.busy = true;
+        syncMeta.lastError = "";
+        await persist();
+        return structuredClone({ config: syncConfig, document: syncDocument(), deviceId: syncMeta.deviceId });
+      });
+      const merged = await syncWebDAV(snapshot.config, snapshot.document, { signal: syncController.signal, deviceId: snapshot.deviceId });
+      return await run(async () => {
+        if (generation !== syncGeneration) throw new Error("连接配置已更改，本次同步结果未应用。");
+        const current = syncDocument();
+        const result = mergeDocuments(current, merged, true);
+        if (compareRevision(result.settings.revision, syncMeta.settingsRevision) > 0) {
+          if (JSON.stringify(settings) !== JSON.stringify(result.settings.value)) {
+            syncMeta.settingsBackup = { value: structuredClone(settings), savedAt: Date.now() };
+          }
+          settings = result.settings.value;
+          syncMeta.settingsRevision = result.settings.revision;
+        }
+        if (snapshot.config.syncRecords) {
+          const protectedIds = protectedRecordIds();
+          records = [
+            ...result.records.filter(record => !protectedIds.has(record.id)),
+            ...records.filter(record => protectedIds.has(record.id))
+          ].sort((a, b) => a.attemptedAt - b.attemptedAt);
+          syncMeta.deletedIds = result.deletedIds;
+        }
+        syncMeta.busy = false;
+        syncMeta.lastSuccessAt = Date.now();
+        syncMeta.lastError = "";
+        await releaseDisabledSites();
+        await persist();
+        return syncView();
+      });
+    } catch (error) {
+      await run(async () => {
+        if (generation !== undefined && generation !== syncGeneration) return;
+        syncMeta.busy = false;
+        syncMeta.lastError = error.message;
+        await persist();
+      });
+      throw error;
+    } finally {
+      syncFlight = null;
+      syncController = null;
+    }
+  })();
+  return syncFlight;
 }
 
 function recordById(id) {
@@ -164,6 +287,13 @@ async function checkNavigation(details, navigation) {
   if (!isCurrent(tabId, navigation)) return;
   const site = siteFor(url);
   const target = pauseTarget(url, pausePage);
+  if (target && !siteFor(target)) {
+    await finish(tabId, "left");
+    abandon(tabId);
+    await persist();
+    if (isCurrent(tabId, navigation)) await chrome.tabs.update(tabId, { url: target }).catch(() => {});
+    return;
+  }
   if (state.sources[tabId] && !site && !target && !["about:blank", "chrome://newtab/"].includes(url)) {
     delete state.sources[tabId];
     await persist();
@@ -203,11 +333,26 @@ function observeNavigation(details, phase) {
 }
 
 async function bootstrap() {
+  await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
   const [local, session] = await Promise.all([
-    chrome.storage.local.get(["settings", "records", "timerLayout"]),
+    chrome.storage.local.get(["settings", "records", "timerLayout", "syncConfig", "syncMeta"]),
     chrome.storage.session.get("state")
   ]);
-  settings = { ...DEFAULT_SETTINGS, ...local.settings };
+  settings = {
+    ...DEFAULT_SETTINGS, ...local.settings,
+    enabledSites: local.settings?.enabledSites ?? DEFAULT_SETTINGS.enabledSites
+  };
+  const deviceId = local.syncMeta?.deviceId || crypto.randomUUID();
+  syncMeta = {
+    deviceId, settingsRevision: { at: local.settings ? 1 : 0, device: deviceId }, deletedIds: [],
+    lastSuccessAt: null, lastError: "", settingsBackup: null,
+    ...local.syncMeta, busy: false
+  };
+  syncConfig = { ...DEFAULT_SYNC_CONFIG, ...(local.syncConfig || installDefaults) };
+  if (!local.syncConfig && installDefaults) {
+    syncConfig = validateSyncConfig(syncConfig);
+    await chrome.storage.local.set({ syncConfig });
+  }
   records = local.records || [];
   timerLayout = local.timerLayout || timerLayout;
   state = session.state || state;
@@ -239,6 +384,7 @@ async function bootstrap() {
     else await chrome.alarms.create(`expire:${grant.tabId}`, { when: grant.expiresAt });
   }
   await chrome.alarms.create("reconcile", { periodInMinutes: 0.5 });
+  await syncAlarm();
   await persist();
   for (const tab of tabs) {
     const current = await chrome.tabs.get(tab.id).catch(() => null);
@@ -255,11 +401,17 @@ const ready = bootstrap();
 chrome.runtime.onInstalled.addListener(() => schedule(() => {}));
 chrome.runtime.onStartup.addListener(() => schedule(() => {}));
 chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
-chrome.alarms.onAlarm.addListener(() => schedule(async () => {
-  for (const grant of Object.values(state.grants)) {
-    if (grant.expiresAt <= Date.now()) await finish(grant.tabId, "expired", true);
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === "webdav-sync") {
+    void ready.then(() => startSync()).catch(() => {});
+    return;
   }
-}));
+  schedule(async () => {
+    for (const grant of Object.values(state.grants)) {
+      if (grant.expiresAt <= Date.now()) await finish(grant.tabId, "expired", true);
+    }
+  });
+});
 chrome.tabs.onRemoved.addListener(tabId => {
   navigations.delete(tabId);
   schedule(async () => {
@@ -342,7 +494,8 @@ async function handle(message, sender) {
   if (["timer", "expire", "timerLayout"].includes(message.type)) {
     const tabId = sender.tab?.id;
     const site = siteFor(sender.url);
-    if (!site || sender.frameId !== 0) throw new Error("无效的计时来源。");
+    if (!matchSite(sender.url) || sender.frameId !== 0) throw new Error("无效的计时来源。");
+    if (!site) return null;
     if (!await isCurrentDocument(sender)) return null;
     if (!state.grants[tabId]) await inherit(tabId, sender.url);
     const grant = state.grants[tabId];
@@ -371,6 +524,7 @@ async function handle(message, sender) {
     const target = pauseTarget(sender.url, pausePage);
     if (!target) throw new Error("不是有效的受限网站地址。");
     const site = siteFor(target);
+    if (!site) throw new Error("该网站限制已关闭，请重新打开网站。");
     if (message.type === "inspect") {
       if (state.grants[tabId]) await finish(tabId, "left");
       const pending = await ensurePending(tabId, target);
@@ -410,16 +564,60 @@ async function handle(message, sender) {
   }
   requirePage(sender, "journal.html");
   if (message.type === "journal") return { settings, records };
+  if (message.type === "syncStatus") return syncView();
+  if (message.type === "syncSave") {
+    const input = { ...message.config };
+    // A blank password means keep the saved one only for the same endpoint and account.
+    if (!input.password && input.url === syncConfig.url && input.username === syncConfig.username) {
+      input.password = syncConfig.password;
+    }
+    const next = validateSyncConfig(input);
+    if (next.enabled && !await chrome.permissions.contains({ origins: [permissionOrigin(next.url)] })) {
+      throw new Error("请授权访问 WebDAV 服务器后重试。");
+    }
+    syncController?.abort();
+    syncGeneration++;
+    const changedEndpoint = next.url !== syncConfig.url || next.username !== syncConfig.username;
+    syncConfig = next;
+    syncMeta.busy = false;
+    syncMeta.lastError = "";
+    if (changedEndpoint) syncMeta.lastSuccessAt = null;
+    await chrome.storage.local.set({ syncConfig });
+    await syncAlarm(true);
+    await persist();
+    return syncView();
+  }
+  if (message.type === "syncForget") {
+    syncController?.abort();
+    syncGeneration++;
+    syncConfig = { ...DEFAULT_SYNC_CONFIG };
+    syncMeta.busy = false;
+    syncMeta.lastSuccessAt = null;
+    syncMeta.lastError = "";
+    await chrome.storage.local.set({ syncConfig });
+    await syncAlarm(true);
+    await persist();
+    return syncView();
+  }
+  if (message.type === "restoreSettings") {
+    if (!syncMeta.settingsBackup) throw new Error("没有可恢复的设置。");
+    settings = validateSettings(syncMeta.settingsBackup.value);
+    syncMeta.settingsBackup = null;
+    syncMeta.settingsRevision = nextRevision(syncMeta.settingsRevision, syncMeta.deviceId);
+    await releaseDisabledSites();
+    await persist();
+    return settings;
+  }
   if (message.type === "settings") {
     settings = validateSettings(message.settings);
+    syncMeta.settingsRevision = nextRevision(syncMeta.settingsRevision, syncMeta.deviceId);
+    await releaseDisabledSites();
     await persist();
     return settings;
   }
   if (message.type === "clear") {
-    const keep = new Set([
-      ...Object.values(state.grants).map(grant => grant.recordId),
-      ...Object.values(state.pending).map(pending => pending.recordId)
-    ]);
+    const keep = protectedRecordIds();
+    syncMeta.deletedIds = [...new Set([...syncMeta.deletedIds, ...records.filter(record => !keep.has(record.id)).map(record => record.id)])];
     records = records.filter(record => keep.has(record.id));
     await persist();
     return { settings, records };
@@ -428,7 +626,10 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  run(() => handle(message, sender)).then(
+  const task = message?.type === "syncNow" ?
+    ready.then(() => { requirePage(sender, "journal.html"); return startSync(); }) :
+    run(() => handle(message, sender));
+  task.then(
     data => sendResponse({ ok: true, data }),
     error => sendResponse({ ok: false, error: error.message })
   );
