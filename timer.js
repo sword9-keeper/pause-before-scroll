@@ -10,6 +10,53 @@
   let drag;
   let reason = "";
   let relatedTabs = 1;
+  let expiryAction = "pause";
+  let paused;
+  const prompt = new globalThis.PauseExpiryPrompt({
+    resume: async input => {
+      const response = await chrome.runtime.sendMessage({ type: "resumeVisit", ...input });
+      if (!response?.ok) throw new Error(response?.error || "恢复失败，请重试。");
+      if (!response.data) throw new Error("页面已切换，请刷新状态后重试。");
+      applyState(response.data);
+      tick();
+    },
+    close: async data => {
+      let response = await chrome.runtime.sendMessage({ type: "endVisit", recordId: data.recordId });
+      while (response?.ok && response.data?.confirmationRequired) {
+        const count = response.data.tabCount;
+        if (!confirm(`关闭 ${count} 个已到期的相关标签页？请先保存未完成的内容。`)) return;
+        response = await chrome.runtime.sendMessage({ type: "endVisit", recordId: data.recordId, confirmedTabs: count });
+      }
+      if (!response?.ok) throw new Error(response?.error || "关闭失败，请重试。");
+      if (response.data?.ended) { paused = null; prompt.hide(); }
+    }
+  });
+
+  function applyState(data) {
+    if (data?.paused) {
+      paused = data;
+      deadline = null;
+      host?.remove();
+      prompt.show(data);
+      return;
+    }
+    paused = null;
+    prompt.hide();
+    if (!data) {
+      deadline = null;
+      host?.remove();
+      return;
+    }
+    deadline = data.expiresAt;
+    warningSeconds = data.warningSeconds;
+    expiryAction = data.expiryAction;
+    reason = data.reason || "";
+    relatedTabs = data.relatedTabs || 1;
+    if (!initialized) {
+      layout = data.timerLayout || layout;
+      initialized = true;
+    }
+  }
 
   function position() {
     if (!host) return;
@@ -140,36 +187,28 @@
       const response = await chrome.runtime.sendMessage({
         type, foreground: document.visibilityState === "visible" && document.hasFocus()
       });
-      if (response?.ok && response.data) {
-        deadline = response.data.expiresAt;
-        warningSeconds = response.data.warningSeconds;
-        reason = response.data.reason || "";
-        relatedTabs = response.data.relatedTabs || 1;
-        if (!initialized) {
-          layout = response.data.timerLayout || layout;
-          initialized = true;
-        }
-      } else if (response?.ok) {
-        deadline = null;
-        host?.remove();
-      }
+      if (response?.ok) applyState(response.data);
     } catch {
       clearInterval(timer);
       host?.remove();
+      prompt.hide();
     }
   }
 
   function tick() {
     if (Date.now() - lastSync > (document.hidden ? 15000 : 5000)) void sync();
+    if (paused) { prompt.show(paused); return; }
     if (!deadline) return;
     mount();
     if (!host) return;
     const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
     const warning = remaining <= warningSeconds;
     host._clock.classList.toggle("warning", warning);
-    host._label.textContent = warning ? "标签页即将关闭" : "本次剩余";
+    host._label.textContent = warning ? expiryAction === "close" ? "标签页即将关闭" : "即将暂停" : "本次剩余";
     host._value.textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
-    host._clock.title = warning ? "本次浏览即将结束，到期关闭相关标签页" : `这次是为了：${reason}`;
+    host._clock.title = warning ?
+      expiryAction === "close" ? "本次浏览即将结束，到期关闭相关标签页" : "本次浏览即将结束，保留页面并暂停" :
+      `这次是为了：${reason}`;
     host._done.title = `结束本次浏览并关闭 ${relatedTabs} 个相关标签页`;
     position();
     if (remaining === 0 && !expiring) {
@@ -183,6 +222,9 @@
   window.addEventListener("focus", () => { void sync().then(tick); });
   window.addEventListener("blur", () => { void sync().then(tick); });
   window.addEventListener("resize", position);
+  chrome.runtime.onMessage.addListener(message => {
+    if (message.type === "visitPaused") void sync().then(tick);
+  });
   void sync().then(tick);
   timer = setInterval(tick, 500);
 })();

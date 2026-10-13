@@ -23,6 +23,7 @@ async function harness(initial = {}) {
   const windows = new Map([[1, { id: 1, focused: true, state: "normal" }]]);
   const updates = [];
   const removed = [];
+  const notifications = [];
   let rejectUpdates = false;
   let document = 0;
   const area = data => ({
@@ -72,7 +73,13 @@ async function harness(initial = {}) {
         if (tab.url.startsWith(base)) delete tab.url;
         return tab;
       },
-      async update(id, { url }) {
+      async sendMessage(id, message, options) { notifications.push({ id, message, options }); },
+      async update(id, { url, muted }) {
+        if (muted !== undefined) {
+          if (!tabs.has(id)) throw new Error("No tab");
+          tabs.get(id).mutedInfo = { muted, reason: "extension", extensionId: "test" };
+          return structuredClone(tabs.get(id));
+        }
         updates.push({ id, url, recordsAtUpdate: structuredClone(local.records) });
         if (rejectUpdates) throw new Error("Test navigation failure");
         if (!tabs.has(id)) throw new Error("No tab");
@@ -115,7 +122,7 @@ async function harness(initial = {}) {
   }
   await drain();
   return {
-    local, session, tabs, windows, updates, removed, chrome, sender, send, drain, navigate,
+    local, session, tabs, windows, updates, removed, notifications, chrome, sender, send, drain, navigate,
     failUpdates(value) { rejectUpdates = value; }
   };
 }
@@ -259,7 +266,8 @@ test("startup expiry closes the old tab without creating a phantom new attempt",
   t.mock.method(Date, "now", () => 8000);
   const h = await harness({
     tabs: [{ id: 42, url: "https://www.douyin.com/", documentId: "old" }],
-    local: { records: [{ id: "expired", outcome: "active", startedAt: 1000, elapsedMs: 0 }] },
+    local: { settings: { ...DEFAULT_SETTINGS, expiryAction: "close" },
+      records: [{ id: "expired", outcome: "active", startedAt: 1000, elapsedMs: 0 }] },
     session: { state: {
       grants: { 42: { tabId: 42, siteId: "douyin", recordId: "expired", startedAt: 1000, expiresAt: 7000 } },
       pending: {}
@@ -355,7 +363,7 @@ test("cross-site children and expired parents do not grant access", async t => {
 test("expiry closes all related tabs with a single elapsed-time record", async t => {
   let now = 100000;
   t.mock.method(Date, "now", () => now);
-  const h = await harness();
+  const h = await harness({ local: { settings: { ...DEFAULT_SETTINGS, expiryAction: "close" } } });
   await h.navigate("https://www.douyin.com/");
   await h.send({ type: "continue", minutes: 0.1, reason: "research" }, h.sender());
   await h.drain();
@@ -489,7 +497,7 @@ test("an in-flight network request does not block expiry or overwrite later loca
   });
   let now = 100000;
   t.mock.method(Date, "now", () => now);
-  const h = await harness();
+  const h = await harness({ local: { settings: { ...DEFAULT_SETTINGS, expiryAction: "close" } } });
   await h.navigate("https://www.douyin.com/");
   await h.send({ type: "continue", minutes: 0.1, reason: "expiry" }, h.sender());
   await h.drain();
@@ -701,4 +709,222 @@ test("worker recovery restores the latest foreground checkpoint from session mem
   });
   assert.equal(h.local.records[0].foregroundMs, 5000);
   assert.equal(h.local.records[0].foregroundByDay[key], 5000);
+});
+
+test("default expiry retains the document, ends the record once, and pauses the linked group", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "unfinished draft" }, h.sender());
+  await h.drain();
+  const documentId = h.sender().documentId;
+  h.tabs.set(43, { id: 43, windowId: 1, url: "https://www.douyin.com/child", mutedInfo: { muted: true, reason: "user" } });
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: 43, sourceTabId: 42, url: h.tabs.get(43).url });
+  await h.drain();
+  const updateCount = h.updates.length;
+  now += 7000;
+  h.chrome.alarms.onAlarm.emit({ name: "expire:42" });
+  await h.drain();
+  assert.equal(h.updates.length, updateCount);
+  assert.equal(h.sender().documentId, documentId);
+  assert.deepEqual(h.removed, []);
+  assert.deepEqual(h.session.state.grants, {});
+  assert.equal(h.local.records.length, 1);
+  assert.equal(h.local.records[0].outcome, "expired");
+  assert.equal(h.local.records[0].elapsedMs, 6000);
+  assert.deepEqual(Object.keys(h.session.state.paused), ["42", "43"]);
+  assert.equal(h.tabs.get(42).mutedInfo.muted, true);
+  assert.equal(h.tabs.get(43).mutedInfo.reason, "user");
+  assert.equal(h.notifications.length, 2);
+  assert.equal((await h.send({ type: "timer", foreground: true }, h.sender())).data.paused, true);
+  assert.equal(h.local.records.length, 1);
+  assert.equal(h.session.state.attention, undefined);
+});
+
+test("saving content resumes only the chosen tab for two measured minutes without navigation", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "draft" }, h.sender());
+  await h.drain();
+  h.tabs.set(43, { id: 43, url: "https://www.douyin.com/child" });
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: 43, sourceTabId: 42, url: h.tabs.get(43).url });
+  await h.drain();
+  now += 7000;
+  h.chrome.alarms.onAlarm.emit({ name: "expire:42" });
+  await h.drain();
+  const recordId = h.session.state.paused[42].recordId;
+  const updateCount = h.updates.length;
+  const response = await h.send({ type: "resumeVisit", recordId, recovery: true }, h.sender());
+  assert.equal(response.ok, true);
+  assert.equal(response.data.expiresAt, now + 120000);
+  assert.equal(response.data.expiryAction, "pause");
+  assert.equal(h.updates.length, updateCount);
+  assert.equal(h.session.state.paused[42], undefined);
+  assert.ok(h.session.state.paused[43]);
+  assert.deepEqual(Object.keys(h.session.state.grants), ["42"]);
+  assert.equal(h.tabs.get(42).mutedInfo.muted, false);
+  assert.equal(h.local.records.length, 2);
+  assert.equal(h.local.records[1].reason, "保存当前页面内容");
+  assert.equal(h.local.records[1].plannedMs, 120000);
+  await h.send({ type: "timer", foreground: true }, h.sender());
+  now += 5000;
+  await h.send({ type: "timer", foreground: true }, h.sender());
+  assert.equal(h.session.state.attention.snapshot.foregroundMs, 5000);
+});
+
+test("paused records can be cleared; explicit resumption still validates purpose and retains original user mute", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(console, "error", () => {});
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "test" }, h.sender());
+  await h.drain();
+  h.tabs.get(42).mutedInfo = { muted: true, reason: "user" };
+  now += 7000;
+  await h.send({ type: "expire" }, h.sender());
+  const recordId = h.session.state.paused[42].recordId;
+  await h.send({ type: "clear" });
+  assert.equal(h.local.records.length, 0);
+  assert.equal((await h.send({ type: "resumeVisit", recordId, minutes: 5, reason: "" }, h.sender())).ok, false);
+  assert.equal((await h.send({ type: "resumeVisit", recordId: "old", minutes: 5, reason: "new" }, h.sender())).ok, false);
+  assert.equal(h.local.records.length, 0);
+  const resumed = await h.send({ type: "resumeVisit", recordId, minutes: 5, reason: "new" }, h.sender());
+  assert.equal(resumed.ok, true);
+  assert.deepEqual(h.tabs.get(42).mutedInfo, { muted: true, reason: "user" });
+  assert.equal(h.local.records.length, 1);
+});
+
+test("stale paused-page commands cannot resume or close a new destination", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "test" }, h.sender());
+  await h.drain();
+  now += 7000;
+  await h.send({ type: "expire" }, h.sender());
+  const stale = h.sender();
+  const recordId = h.session.state.paused[42].recordId;
+  h.chrome.webNavigation.onBeforeNavigate.emit({ tabId: 42, frameId: 0, url: "https://www.google.com/" });
+  await h.send({ type: "resumeVisit", recordId, recovery: true }, stale);
+  await h.send({ type: "endVisit", recordId }, stale);
+  await h.drain();
+  assert.equal(h.local.records.length, 1);
+  assert.deepEqual(h.session.state.grants, {});
+  assert.deepEqual(h.session.state.paused, {});
+  assert.deepEqual(h.removed, []);
+  assert.equal(h.tabs.get(42).mutedInfo.muted, false);
+});
+
+test("closing an expired group requires confirmation and does not count as an early stop", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "test" }, h.sender());
+  await h.drain();
+  h.tabs.set(43, { id: 43, url: "https://www.douyin.com/child" });
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: 43, sourceTabId: 42, url: h.tabs.get(43).url });
+  await h.drain();
+  h.tabs.set(44, { id: 44, url: "https://www.google.com/" });
+  now += 7000;
+  await h.send({ type: "expire" }, h.sender());
+  const recordId = h.session.state.paused[42].recordId;
+  const confirmation = await h.send({ type: "endVisit", recordId }, h.sender());
+  assert.equal(confirmation.data.tabCount, 2);
+  assert.deepEqual(h.removed, []);
+  await h.send({ type: "endVisit", recordId, confirmedTabs: 2 }, h.sender());
+  assert.deepEqual(h.removed, [42, 43]);
+  assert.ok(h.tabs.has(44));
+  assert.equal(h.local.records[0].outcome, "expired");
+  assert.equal(h.local.records[0].finishIntent, undefined);
+});
+
+test("worker recovery preserves a paused page and does not create a fresh attempt", async () => {
+  const paused = { siteId: "douyin", recordId: "expired", reason: "draft", plannedMs: 6000, documentId: "same", mutedByUs: true };
+  const h = await harness({
+    tabs: [{ id: 42, url: "https://www.douyin.com/", documentId: "same", mutedInfo: { muted: true, reason: "extension", extensionId: "test" } }],
+    local: { records: [{ id: "expired", outcome: "expired", startedAt: 1000, elapsedMs: 6000 }] },
+    session: { state: { grants: {}, pending: {}, paused: { 42: paused } } }
+  });
+  assert.equal(h.updates.length, 0);
+  assert.equal(h.local.records.length, 1);
+  assert.equal((await h.send({ type: "timer" }, h.sender())).data.paused, true);
+  await h.send({ type: "settings", settings: { ...DEFAULT_SETTINGS, enabledSites: [] } });
+  assert.deepEqual(h.session.state.paused, {});
+  assert.equal(h.tabs.get(42).mutedInfo.muted, false);
+  assert.equal((await h.send({ type: "timer" }, h.sender())).data, null);
+});
+
+test("expiry preferences are latched at the start and cannot silently change an active visit", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "test" }, h.sender());
+  await h.drain();
+  await h.send({ type: "settings", settings: { ...DEFAULT_SETTINGS, expiryAction: "close" } });
+  assert.equal((await h.send({ type: "timer" }, h.sender())).data.expiryAction, "pause");
+  now += 7000;
+  await h.send({ type: "expire" }, h.sender());
+  assert.deepEqual(h.removed, []);
+  assert.ok(h.session.state.paused[42]);
+  const pausedId = h.session.state.paused[42].recordId;
+  await h.send({ type: "resumeVisit", recordId: pausedId, minutes: 0.1, reason: "new interval" }, h.sender());
+  now += 7000;
+  await h.send({ type: "expire" }, h.sender());
+  assert.deepEqual(h.removed, [42]);
+});
+
+test("lost session state releases only orphan muting owned by this extension", async () => {
+  const h = await harness({ tabs: [
+    { id: 42, url: "https://www.google.com/", mutedInfo: { muted: true, reason: "extension", extensionId: "test" } },
+    { id: 43, url: "https://www.google.com/", mutedInfo: { muted: true, reason: "user" } },
+    { id: 44, url: "https://www.google.com/", mutedInfo: { muted: true, reason: "extension", extensionId: "another" } }
+  ] });
+  assert.equal(h.tabs.get(42).mutedInfo.muted, false);
+  assert.equal(h.tabs.get(43).mutedInfo.muted, true);
+  assert.equal(h.tabs.get(44).mutedInfo.muted, true);
+});
+
+test("closing a paused group leaves a sibling with a newer same-site navigation intact", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.1, reason: "test" }, h.sender());
+  await h.drain();
+  h.tabs.set(43, { id: 43, url: "https://www.douyin.com/child" });
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: 43, sourceTabId: 42, url: h.tabs.get(43).url });
+  await h.drain();
+  now += 7000;
+  await h.send({ type: "expire" }, h.sender());
+  const recordId = h.session.state.paused[42].recordId;
+  const closing = h.send({ type: "endVisit", recordId, confirmedTabs: 2 }, h.sender());
+  h.chrome.webNavigation.onBeforeNavigate.emit({ tabId: 43, frameId: 0, url: "https://www.douyin.com/new-destination" });
+  await closing;
+  await h.drain();
+  assert.deepEqual(h.removed, [42]);
+  assert.ok(h.tabs.has(43));
+});
+
+test("fractional custom minutes produce integer-millisecond records before and after pause", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 0.123456, reason: "test" }, h.sender());
+  await h.drain();
+  assert.equal(h.local.records[0].plannedMs, 7407);
+  await h.send({ type: "timer", foreground: true }, h.sender());
+  now += 8000;
+  await h.send({ type: "expire" }, h.sender());
+  assert.equal(h.local.records[0].foregroundMs, 7407);
+  const recordId = h.session.state.paused[42].recordId;
+  await h.send({ type: "resumeVisit", recordId, minutes: 0.123456, reason: "again" }, h.sender());
+  assert.equal(h.local.records[1].plannedMs, 7407);
 });

@@ -17,8 +17,8 @@ async function initialize() {
   $("#quote").textContent = settings.quote;
   $(".attribution").hidden = settings.quote !== "什么都无法舍弃的人，什么都无法做到。";
   $("#visit-context").textContent = today.observedRecords ?
-    `今天在这里：前台 ${readableTime(today.foregroundMs)} · 进入 ${today.entries} 次` :
-    today.entries ? `今天已进入 ${today.entries} 次` : "这次打开，是为了什么？";
+    `今天在这里：前台 ${readableTime(today.foregroundMs)} · 开始 ${today.entries} 次` :
+    today.entries ? `今天已开始浏览 ${today.entries} 次` : "这次打开，是为了什么？";
   $("#return-context").hidden = !recentReturn;
   for (const reason of settings.reasons) $("#reason").add(new Option(reason, reason));
   $("#reason").add(new Option("自己写一句", "__custom__"));

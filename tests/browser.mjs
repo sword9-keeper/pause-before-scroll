@@ -180,6 +180,13 @@ try {
   passed("closing confirmation records dismissal");
 
   const playlist = "https://www.bilibili.com/list/ml3197110280?oid=116067095609579&bvid=BV19Scpz3ED5";
+  const settingsPage = await context.newPage();
+  await settingsPage.goto(`${extension}/journal.html`);
+  await settingsPage.locator("#settings-tab").click();
+  await settingsPage.locator('[name="expiry-action"][value="close"]').check();
+  await settingsPage.locator('#settings-form [type="submit"]').click();
+  await eventually(async () => (await data()).settings.expiryAction === "close", "explicit auto-close preference");
+  await settingsPage.close();
   const video = await context.newPage();
   await navigate(video, playlist);
   await waitForPause(video);

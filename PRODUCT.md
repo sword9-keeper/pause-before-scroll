@@ -49,7 +49,7 @@ established by shipping features or passing automated tests.
 | Intentional early exit | Implemented and technically verified | Browser stop/cancel/confirm checks; unit stale-document, unrelated-tab and shared-grant checks |
 | Understandable personal overview | Implemented and technically verified | Unit day aggregation and legacy-unknown checks; real Chromium 1280/390/320 px screenshots; macOS user validation pending |
 | First-run setup and custom sites | Not started | Fresh-profile task completion; permissions and exceptions tests |
-| Humane end-of-visit flow | Not started | User-selected behavior; recovery of work; no surprise tab loss |
+| Humane end-of-visit flow | Implemented and technically verified | Chromium draft/document preservation, media pause, fullscreen exit, keyboard/narrow layouts; unit race/mute/recovery checks; real-site and macOS validation pending |
 | Opt-in efficacy pilot | Not started | Protocol, consenting users, baseline/intervention data, dropout and adverse effects |
 | Public distribution | Not started | Store-ready artifact, privacy policy, signed-off listing, real macOS check |
 | Adoption and sustained value | Unproven | Real activation, retention, feedback, reduced unwanted use, not downloads alone |

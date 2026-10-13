@@ -12,7 +12,7 @@ const extensionPath = path.join(work, "extension");
 const output = path.join(root, "test-results");
 await mkdir(extensionPath);
 await mkdir(output, { recursive: true });
-for (const file of ["manifest.json", "core.js", "background.js", "sync.js", "install-defaults.js", "insights.js", "vendor", "pause.html", "pause.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
+for (const file of ["manifest.json", "core.js", "background.js", "sync.js", "install-defaults.js", "insights.js", "vendor", "pause.html", "pause.js", "expiry.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
   await cp(path.join(root, file), path.join(extensionPath, file), { recursive: true });
 }
 const manifest = JSON.parse(await readFile(path.join(extensionPath, "manifest.json"), "utf8"));
@@ -73,6 +73,7 @@ try {
   const a = await device("device-a");
   const b = await device("device-b");
   await a.page.locator("#settings-tab").click();
+  await a.page.locator('[name="expiry-action"][value="close"]').check();
   await a.page.locator("#quote-input").fill("Settings from device A");
   await a.page.locator('[name="enabled-site"][value="xiaohongshu"]').uncheck();
   await a.page.locator('#settings-form [type="submit"]').click();
@@ -91,6 +92,7 @@ try {
   await sync(b);
   const storedB = await b.worker.evaluate(() => chrome.storage.local.get(["settings", "records", "syncMeta"]));
   assert.equal(storedB.settings.quote, "Settings from device A");
+  assert.equal(storedB.settings.expiryAction, "close");
   assert.ok(!storedB.settings.enabledSites.includes("xiaohongshu"));
   assert.equal(storedB.records.length, 1);
   assert.equal(storedB.records[0].outcome, "declined");

@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS = {
   quote: "先停一下。接下来，由你决定。",
   reasons: ["查找资料", "看指定内容", "休息一下"],
   warningSeconds: 60,
+  expiryAction: "pause",
   enabledSites: SITES.map(site => site.id)
 };
 
@@ -48,7 +49,9 @@ export function validateSettings(input) {
   if (!Number.isInteger(warningSeconds) || warningSeconds < 1 || warningSeconds > 300) {
     throw new Error("提前提醒时间应为 1 至 300 秒。");
   }
-  return { exitUrl: url.href, quote, reasons, warningSeconds, enabledSites: SITES.map(site => site.id).filter(id => enabledSites.includes(id)) };
+  const expiryAction = input.expiryAction ?? DEFAULT_SETTINGS.expiryAction;
+  if (!["pause", "close"].includes(expiryAction)) throw new Error("到期方式无效。");
+  return { exitUrl: url.href, quote, reasons, warningSeconds, expiryAction, enabledSites: SITES.map(site => site.id).filter(id => enabledSites.includes(id)) };
 }
 
 export function validateGrant(minutes, reason) {

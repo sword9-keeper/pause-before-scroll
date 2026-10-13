@@ -105,7 +105,7 @@ function renderOverview() {
     column.className = "day-column";
     column.setAttribute("role", "listitem");
     const duration = day.observedRecords ? readableTime(day.foregroundMs) : day.entries ? "未观测" : "无记录";
-    column.setAttribute("aria-label", `${day.key}：${duration}，进入 ${day.entries} 次`);
+    column.setAttribute("aria-label", `${day.key}：${duration}，开始 ${day.entries} 次`);
     column.title = column.getAttribute("aria-label");
     const track = document.createElement("div");
     track.className = "day-track";
@@ -130,7 +130,7 @@ function renderOverview() {
     const name = document.createElement("strong");
     name.textContent = site.name;
     const counts = document.createElement("span");
-    counts.textContent = `进入 ${site.entries} 次 · 选择离开 ${site.declined} 次`;
+    counts.textContent = `开始 ${site.entries} 次 · 选择离开 ${site.declined} 次`;
     const duration = document.createElement("span");
     duration.className = "site-duration";
     duration.textContent = site.observedRecords ? readableTime(site.foregroundMs) : "未观测";
@@ -153,6 +153,7 @@ $("#settings-form").addEventListener("submit", async event => {
     await request("settings", { settings: {
       exitUrl: $("#exit-url").value, quote: $("#quote-input").value,
       reasons: $("#reasons-input").value.split(/\r?\n/), warningSeconds: Number($("#warning-input").value),
+      expiryAction: document.querySelector('[name="expiry-action"]:checked').value,
       enabledSites: [...document.querySelectorAll('[name="enabled-site"]:checked')].map(input => input.value)
     } });
     settingsDirty = false;
@@ -196,6 +197,9 @@ function fillSettings(settings) {
   $("#quote-input").value = settings.quote;
   $("#reasons-input").value = settings.reasons.join("\n");
   $("#warning-input").value = settings.warningSeconds;
+  for (const input of document.querySelectorAll('[name="expiry-action"]')) {
+    input.checked = input.value === (settings.expiryAction || "pause");
+  }
   for (const input of document.querySelectorAll('[name="enabled-site"]')) {
     input.checked = settings.enabledSites.includes(input.value);
   }

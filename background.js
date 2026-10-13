@@ -73,6 +73,9 @@ async function syncAlarm(reset = false) {
 }
 
 async function releaseDisabledSites() {
+  for (const [id, paused] of Object.entries(state.paused)) {
+    if (!settings.enabledSites.includes(paused.siteId)) await releasePaused(Number(id));
+  }
   for (const grant of Object.values(state.grants)) {
     if (!settings.enabledSites.includes(grant.siteId)) await finish(grant.tabId, "left");
   }
@@ -211,6 +214,73 @@ async function finish(tabId, outcome, close = false) {
   }
 }
 
+function timerView(grant) {
+  return {
+    expiresAt: grant.expiresAt, warningSeconds: settings.warningSeconds, timerLayout,
+    expiryAction: grant.expiryAction || settings.expiryAction,
+    reason: recordById(grant.recordId)?.reason || "",
+    relatedTabs: Object.values(state.grants).filter(item => item.recordId === grant.recordId).length
+  };
+}
+
+function pausedView(paused) {
+  return {
+    paused: true, recordId: paused.recordId, reason: paused.reason,
+    plannedMs: paused.plannedMs, reasons: settings.reasons,
+    relatedTabs: Object.values(state.paused).filter(item => item.recordId === paused.recordId).length
+  };
+}
+
+function notifyPaused(tabId) {
+  const paused = state.paused[tabId];
+  if (!paused) return;
+  const options = paused.documentId ? { documentId: paused.documentId } : { frameId: 0 };
+  // A frozen tab must never hold up other tabs or the navigation queue.
+  void chrome.tabs.sendMessage(tabId, { type: "visitPaused", data: pausedView(paused) }, options).catch(() => {});
+}
+
+async function releasePaused(tabId) {
+  const paused = state.paused[tabId];
+  if (!paused) return;
+  delete state.paused[tabId];
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (paused.mutedByUs && tab?.mutedInfo?.muted && tab.mutedInfo.extensionId === chrome.runtime.id) {
+    await chrome.tabs.update(tabId, { muted: false }).catch(() => {});
+  }
+  await persist();
+}
+
+async function expireVisit(tabId) {
+  const original = state.grants[tabId];
+  if (!original) return;
+  const group = Object.values(state.grants).filter(grant => grant.recordId === original.recordId);
+  for (const grant of group) {
+    if ((grant.expiryAction || settings.expiryAction) === "close") {
+      await finish(grant.tabId, "expired", true);
+      continue;
+    }
+    const tab = await chrome.tabs.get(grant.tabId).catch(() => null);
+    const navigation = navigations.get(grant.tabId);
+    const current = tab?.pendingUrl || tab?.url;
+    if (siteFor(current)?.id === grant.siteId && (!navigation || siteFor(navigation.url)?.id === grant.siteId)) {
+      const record = recordById(grant.recordId);
+      const paused = {
+        siteId: grant.siteId, recordId: grant.recordId,
+        reason: record?.reason || "", plannedMs: record?.plannedMs || 0,
+        documentId: navigation?.documentId, mutedByUs: !tab.mutedInfo?.muted
+      };
+      state.paused[grant.tabId] = paused;
+      await finish(grant.tabId, "expired");
+      if (paused.mutedByUs && (!navigations.get(grant.tabId) || siteFor(navigations.get(grant.tabId).url)?.id === grant.siteId)) {
+        await chrome.tabs.update(grant.tabId, { muted: true }).catch(() => {});
+      }
+      notifyPaused(grant.tabId);
+    } else {
+      await finish(grant.tabId, "expired");
+    }
+  }
+}
+
 async function inherit(tabId, url) {
   const source = state.sources[tabId];
   const site = siteFor(url);
@@ -325,6 +395,15 @@ async function checkNavigation(details, navigation) {
   const { tabId, url } = details;
   if (!isCurrent(tabId, navigation)) return;
   const site = siteFor(url);
+  const paused = state.paused[tabId];
+  if (paused) {
+    const sameDocument = !paused.documentId || !details.documentId || paused.documentId === details.documentId;
+    if (site?.id === paused.siteId && navigation?.phase !== "before" && sameDocument) {
+      notifyPaused(tabId);
+      return;
+    }
+    await releasePaused(tabId);
+  }
   const target = pauseTarget(url, pausePage);
   if (target && !siteFor(target)) {
     await finish(tabId, "left");
@@ -342,7 +421,7 @@ async function checkNavigation(details, navigation) {
   if (!site && !target && !grant && !state.pending[tabId]) return;
   if (grant) {
     if (grant.siteId === site?.id) {
-      if (grant.expiresAt <= Date.now()) await finish(tabId, "expired", true);
+      if (grant.expiresAt <= Date.now()) await expireVisit(tabId);
       return;
     }
     await finish(tabId, "left");
@@ -383,6 +462,7 @@ async function bootstrap() {
   ]);
   settings = {
     ...DEFAULT_SETTINGS, ...local.settings,
+    expiryAction: local.settings?.expiryAction ?? DEFAULT_SETTINGS.expiryAction,
     enabledSites: local.settings?.enabledSites ?? DEFAULT_SETTINGS.enabledSites
   };
   const deviceId = local.syncMeta?.deviceId || crypto.randomUUID();
@@ -400,8 +480,17 @@ async function bootstrap() {
   timerLayout = local.timerLayout || timerLayout;
   state = session.state || state;
   state.sources ||= {};
+  state.paused ||= {};
   const tabs = await chrome.tabs.query({});
   const liveIds = new Set(tabs.map(tab => tab.id));
+  for (const id of Object.keys(state.paused)) {
+    if (!liveIds.has(Number(id))) delete state.paused[id];
+  }
+  for (const tab of tabs) {
+    if (!state.paused[tab.id] && tab.mutedInfo?.muted && tab.mutedInfo.extensionId === chrome.runtime.id) {
+      await chrome.tabs.update(tab.id, { muted: false }).catch(() => {});
+    }
+  }
   if (state.attention && !liveIds.has(state.attention.tabId)) state.attention = null;
   for (const id of Object.keys(state.sources)) {
     if (!liveIds.has(Number(id))) delete state.sources[id];
@@ -435,7 +524,7 @@ async function bootstrap() {
     }
   }
   for (const grant of Object.values(state.grants)) {
-    if (grant.expiresAt <= Date.now()) await finish(grant.tabId, "expired", true);
+    if (grant.expiresAt <= Date.now()) await expireVisit(grant.tabId);
     else await chrome.alarms.create(`expire:${grant.tabId}`, { when: grant.expiresAt });
   }
   await chrome.alarms.create("reconcile", { periodInMinutes: 0.5 });
@@ -463,7 +552,7 @@ chrome.alarms.onAlarm.addListener(alarm => {
   }
   schedule(async () => {
     for (const grant of Object.values(state.grants)) {
-      if (grant.expiresAt <= Date.now()) await finish(grant.tabId, "expired", true);
+      if (grant.expiresAt <= Date.now()) await expireVisit(grant.tabId);
     }
   });
 });
@@ -472,6 +561,7 @@ chrome.tabs.onRemoved.addListener(tabId => {
   const at = Date.now();
   schedule(async () => {
     if (state.attention?.tabId === tabId) settleForeground(at);
+    await releasePaused(tabId);
     const hadSource = Boolean(state.sources[tabId]);
     delete state.sources[tabId];
     await finish(tabId, "closed");
@@ -521,6 +611,7 @@ chrome.webNavigation.onErrorOccurred.addListener(details => {
 chrome.webNavigation.onTabReplaced.addListener(({ tabId, replacedTabId }) => {
   navigations.delete(replacedTabId);
   schedule(async () => {
+    await releasePaused(replacedTabId);
     await finish(replacedTabId, "left");
     if (abandon(replacedTabId)) await persist();
     const tab = await chrome.tabs.get(tabId).catch(() => null);
@@ -558,17 +649,66 @@ async function isCurrentDocument(sender) {
 }
 
 async function handle(message, sender) {
-  if (["timer", "expire", "timerLayout", "endVisit"].includes(message.type)) {
+  if (["timer", "expire", "timerLayout", "endVisit", "resumeVisit"].includes(message.type)) {
     const tabId = sender.tab?.id;
     const site = siteFor(sender.url);
     if (!matchSite(sender.url) || sender.frameId !== 0) throw new Error("无效的计时来源。");
-    if (!site) return null;
     if (!await isCurrentDocument(sender)) return null;
+    if (!site) return null;
+    const paused = state.paused[tabId];
+    if (paused) {
+      if (paused.documentId && paused.documentId !== sender.documentId) return null;
+      if (message.type === "resumeVisit" || message.type === "endVisit") {
+        if (message.recordId !== paused.recordId) throw new Error("本次浏览状态已更新，请重试。");
+      }
+      if (message.type === "resumeVisit") {
+        const { duration, purpose } = message.recovery === true ?
+          { duration: 2, purpose: "保存当前页面内容" } : validateGrant(message.minutes, message.reason);
+        const now = Date.now();
+        const plannedMs = Math.round(duration * 60000);
+        const record = {
+          id: crypto.randomUUID(), siteId: site.id, siteName: site.name,
+          attemptedAt: now, startedAt: now, endedAt: null, plannedMs,
+          elapsedMs: 0, reason: purpose, outcome: "active",
+          activityVersion: 1, foregroundMs: 0, foregroundByDay: {}
+        };
+        records.push(record);
+        const grant = {
+          tabId, siteId: site.id, recordId: record.id, startedAt: now,
+          expiresAt: now + record.plannedMs,
+          expiryAction: message.recovery === true ? "pause" : settings.expiryAction
+        };
+        state.grants[tabId] = grant;
+        await releasePaused(tabId);
+        await chrome.alarms.create(`expire:${tabId}`, { when: grant.expiresAt });
+        return timerView(grant);
+      }
+      if (message.type === "endVisit") {
+        const group = Object.entries(state.paused).filter(([, item]) => item.recordId === paused.recordId);
+        if (group.length > 1 && message.confirmedTabs !== group.length) {
+          return { confirmationRequired: true, tabCount: group.length };
+        }
+        for (const [id, item] of group) {
+          const relatedId = Number(id);
+          await releasePaused(relatedId);
+          const tab = await chrome.tabs.get(relatedId).catch(() => null);
+          const navigation = navigations.get(relatedId);
+          if (siteFor(tab?.pendingUrl || tab?.url)?.id === item.siteId &&
+              (!navigation || navigation.phase !== "before" && siteFor(navigation.url)?.id === item.siteId &&
+                (!item.documentId || !navigation.documentId || item.documentId === navigation.documentId))) {
+            await chrome.tabs.remove(relatedId).catch(() => {});
+          }
+        }
+        return { ended: true };
+      }
+      return pausedView(paused);
+    }
+    if (message.type === "resumeVisit") throw new Error("当前页面没有待恢复的浏览。");
     if (!state.grants[tabId]) await inherit(tabId, sender.url);
     const grant = state.grants[tabId];
     if (grant && grant.siteId === site.id && grant.expiresAt <= Date.now()) {
-      await finish(tabId, "expired", true);
-      return null;
+      await expireVisit(tabId);
+      return state.paused[tabId] ? pausedView(state.paused[tabId]) : null;
     }
     if (!grant || grant.siteId !== site.id) {
       if (message.type === "endVisit") return { ended: false };
@@ -593,11 +733,7 @@ async function handle(message, sender) {
       timerLayout = { x: Math.max(0, Math.min(1, layout.x)), y: Math.max(0, Math.min(1, layout.y)), collapsed: layout.collapsed };
       await chrome.storage.local.set({ timerLayout });
     }
-    return {
-      expiresAt: grant.expiresAt, warningSeconds: settings.warningSeconds, timerLayout,
-      reason: recordById(grant.recordId)?.reason || "",
-      relatedTabs: Object.values(state.grants).filter(item => item.recordId === grant.recordId).length
-    };
+    return timerView(grant);
   }
   if (["inspect", "continue", "leave"].includes(message.type)) {
     requirePage(sender, "pause.html");
@@ -631,9 +767,13 @@ async function handle(message, sender) {
     }
     const { duration, purpose } = validateGrant(message.minutes, message.reason);
     const now = Date.now();
-    const grant = { tabId, siteId: site.id, recordId: pending.recordId, startedAt: now, expiresAt: now + duration * 60000 };
+    const plannedMs = Math.round(duration * 60000);
+    const grant = {
+      tabId, siteId: site.id, recordId: pending.recordId, startedAt: now,
+      expiresAt: now + plannedMs, expiryAction: settings.expiryAction
+    };
     Object.assign(recordById(pending.recordId), {
-      startedAt: now, plannedMs: duration * 60000, reason: purpose, outcome: "active"
+      startedAt: now, plannedMs, reason: purpose, outcome: "active"
     });
     state.grants[tabId] = grant;
     delete state.pending[tabId];

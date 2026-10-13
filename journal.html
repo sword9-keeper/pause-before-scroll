@@ -29,7 +29,7 @@
       </div>
       <dl class="stats overview-stats">
         <div><dt title="已观测到的聚焦窗口、活动标签页时间，不等同于实际观看或注意力">前台浏览</dt><dd id="insight-foreground">未观测</dd></div>
-        <div><dt>进入网站</dt><dd id="insight-entries">0</dd></div>
+        <div><dt>开始浏览</dt><dd id="insight-entries">0</dd></div>
         <div><dt>打开前选择离开</dt><dd id="insight-declined">0</dd></div>
         <div><dt>提前结束并关闭</dt><dd id="insight-done">0</dd></div>
       </dl>
@@ -70,6 +70,10 @@
         <textarea id="reasons-input" rows="5"></textarea>
         <label for="warning-input">提前提醒 · 秒</label>
         <input id="warning-input" type="number" min="1" max="300" required>
+        <fieldset class="sites"><legend>时间到了</legend>
+          <label class="check-label"><input type="radio" name="expiry-action" value="pause" checked>暂停，保留当前页面</label>
+          <label class="check-label"><input type="radio" name="expiry-action" value="close">直接关闭关联标签页</label>
+        </fieldset>
         <fieldset class="sites"><legend>受限网站 · 含子域名</legend>
           <label class="check-label"><input type="checkbox" name="enabled-site" value="douyin" checked>抖音</label>
           <label class="check-label"><input type="checkbox" name="enabled-site" value="xiaohongshu" checked>小红书</label>

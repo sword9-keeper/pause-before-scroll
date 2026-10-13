@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const work = await mkdtemp(path.join(tmpdir(), "pause-personal-"));
 const extensionPath = path.join(work, "extension");
 await mkdir(extensionPath);
-for (const file of ["manifest.json", "core.js", "background.js", "sync.js", "install-defaults.js", "insights.js", "vendor", "pause.html", "pause.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
+for (const file of ["manifest.json", "core.js", "background.js", "sync.js", "install-defaults.js", "insights.js", "vendor", "pause.html", "pause.js", "expiry.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
   await cp(path.join(root, file), path.join(extensionPath, file), { recursive: true });
 }
 const manifest = JSON.parse(await readFile(path.join(extensionPath, "manifest.json"), "utf8"));

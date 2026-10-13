@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "刷之前想一下",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "进入前停一下，按自己选择的时间离开。支持可选的 WebDAV 设置与记录同步。",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms", "webNavigation"],
@@ -19,7 +19,7 @@
   "options_page": "journal.html",
   "content_scripts": [{
     "matches": ["*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*"],
-    "js": ["timer.js"],
+    "js": ["expiry.js", "timer.js"],
     "run_at": "document_start"
   }]
 }

@@ -9,7 +9,8 @@
     "test:upgrade": "node tests/upgrade.mjs",
     "test:sync": "node tests/sync-browser.mjs",
     "test:personal": "node tests/personal-browser.mjs",
-    "test:value": "node tests/value-browser.mjs"
+    "test:value": "node tests/value-browser.mjs",
+    "test:expiry": "node tests/expiry-browser.mjs"
   },
   "devDependencies": {
     "@rgrove/parse-xml": "5.0.0",

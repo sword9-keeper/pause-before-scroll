@@ -26,6 +26,8 @@ test("settings prevent redirect loops and invalid inputs", () => {
   }
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, warningSeconds: 0 }));
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, quote: "" }));
+  assert.equal(validateSettings({ ...DEFAULT_SETTINGS, expiryAction: undefined }).expiryAction, "pause");
+  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, expiryAction: "unknown" }));
 });
 
 test("requires explicit duration and nonempty reason", () => {
@@ -57,4 +59,5 @@ test("navigation interception needs neither DNR nor web-accessible extension pag
     "*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.bilibili.com/*"
   ]);
   assert.match(manifest.content_security_policy.extension_pages, /frame-ancestors 'none'/);
+  assert.deepEqual(manifest.content_scripts[0].js, ["expiry.js", "timer.js"]);
 });
