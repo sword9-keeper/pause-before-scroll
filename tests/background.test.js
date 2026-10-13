@@ -19,7 +19,8 @@ async function harness(initial = {}) {
   const local = structuredClone(initial.local || {});
   const session = structuredClone(initial.session || {});
   const tabs = new Map((initial.tabs || [{ id: 42, url: "about:blank", documentId: "initial" }])
-    .map(tab => [tab.id, structuredClone(tab)]));
+    .map(tab => [tab.id, { active: true, windowId: 1, ...structuredClone(tab) }]));
+  const windows = new Map([[1, { id: 1, focused: true, state: "normal" }]]);
   const updates = [];
   const removed = [];
   let rejectUpdates = false;
@@ -53,9 +54,17 @@ async function harness(initial = {}) {
       async clear(name) { return alarms.delete(name); }
     },
     webNavigation,
+    windows: {
+      onFocusChanged: event(),
+      async get(id) {
+        if (!windows.has(id)) throw new Error("No window");
+        return structuredClone(windows.get(id));
+      }
+    },
     tabs: {
       onCreated: event(),
       onRemoved: event(),
+      onActivated: event(),
       async query() { return structuredClone([...tabs.values()]); },
       async get(id) {
         if (!tabs.has(id)) throw new Error("No tab");
@@ -106,7 +115,7 @@ async function harness(initial = {}) {
   }
   await drain();
   return {
-    local, session, tabs, updates, removed, chrome, sender, send, drain, navigate,
+    local, session, tabs, windows, updates, removed, chrome, sender, send, drain, navigate,
     failUpdates(value) { rejectUpdates = value; }
   };
 }
@@ -574,4 +583,122 @@ test("legacy settings are seeded above fresh defaults and sync remains opt-in", 
   assert.equal(h.local.settings.quote, "Legacy quote");
   assert.deepEqual(h.local.settings.enabledSites, DEFAULT_SETTINGS.enabledSites);
   assert.equal((await h.send({ type: "syncStatus" })).data.config.enabled, false);
+});
+
+test("foreground observations stop on background activation, window blur and long heartbeat gaps", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 60, reason: "reading" }, h.sender());
+  await h.drain();
+  const sample = () => h.send({ type: "timer", foreground: true }, h.sender());
+  await sample();
+  now += 5000;
+  await sample();
+  assert.equal(h.session.state.attention.snapshot.foregroundMs, 5000);
+  now += 2000;
+  h.tabs.get(42).active = false;
+  h.chrome.tabs.onActivated.emit({ tabId: 99, windowId: 1 });
+  await h.drain();
+  assert.equal(h.local.records[0].foregroundMs, 7000);
+  now += 600000;
+  await sample();
+  assert.equal(h.local.records[0].foregroundMs, 7000);
+  h.tabs.get(42).active = true;
+  await sample();
+  now += 3000;
+  h.windows.get(1).focused = false;
+  h.chrome.windows.onFocusChanged.emit(-1);
+  await h.drain();
+  now += 10000;
+  await sample();
+  assert.equal(h.local.records[0].foregroundMs, 10000);
+  h.windows.get(1).focused = true;
+  await sample();
+  now += 600000;
+  await sample();
+  assert.equal(h.local.records[0].foregroundMs, 10000);
+  now += 5000;
+  await sample();
+  assert.equal(h.session.state.attention.snapshot.foregroundMs, 15000);
+});
+
+test("a hidden document cannot claim foreground time and background siblings do not double count", async t => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "test" }, h.sender());
+  await h.drain();
+  await h.send({ type: "timer", foreground: true }, h.sender());
+  h.tabs.set(43, { id: 43, active: false, windowId: 1, url: "https://www.douyin.com/child" });
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: 43, sourceTabId: 42, url: h.tabs.get(43).url });
+  await h.drain();
+  now += 5000;
+  await h.send({ type: "timer", foreground: true }, h.sender(43));
+  await h.send({ type: "timer", foreground: true }, h.sender());
+  assert.equal(h.session.state.attention.snapshot.foregroundMs, 5000);
+  now += 1000;
+  await h.send({ type: "timer", foreground: false }, h.sender());
+  now += 5000;
+  await h.send({ type: "timer", foreground: false }, h.sender());
+  assert.equal(h.local.records[0].foregroundMs, 6000);
+});
+
+test("ending a linked visit requires confirmation and never closes an independently granted tab", async () => {
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "test" }, h.sender());
+  await h.drain();
+  h.tabs.set(43, { id: 43, windowId: 1, url: "https://www.douyin.com/child" });
+  h.chrome.webNavigation.onCreatedNavigationTarget.emit({ tabId: 43, sourceTabId: 42, url: h.tabs.get(43).url });
+  await h.drain();
+  const response = await h.send({ type: "endVisit" }, h.sender());
+  assert.equal(response.data.confirmationRequired, true);
+  assert.equal(response.data.tabCount, 2);
+  assert.equal(h.removed.length, 0);
+  h.tabs.set(44, { id: 44, windowId: 1, url: "https://www.google.com/" });
+  const finished = await h.send({ type: "endVisit", confirmedTabs: 2 }, h.sender());
+  assert.equal(finished.data.ended, true);
+  await h.drain();
+  assert.deepEqual(h.removed, [42, 43]);
+  assert.ok(h.tabs.has(44));
+  assert.equal(h.local.records[0].finishIntent, "done");
+  assert.equal(h.local.records[0].outcome, "left");
+});
+
+test("stale end-visit messages cannot close a tab that has navigated elsewhere", async () => {
+  const h = await harness();
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "test" }, h.sender());
+  await h.drain();
+  const stale = h.sender();
+  h.chrome.webNavigation.onBeforeNavigate.emit({ tabId: 42, frameId: 0, url: "https://www.google.com/" });
+  await h.send({ type: "endVisit" }, stale);
+  await h.drain();
+  assert.equal(h.removed.length, 0);
+  assert.equal(h.local.records[0].finishIntent, undefined);
+});
+
+test("worker recovery restores the latest foreground checkpoint from session memory", async () => {
+  const startedAt = Date.now() - 10000;
+  const key = new Date(startedAt).toLocaleDateString("en-CA");
+  const h = await harness({
+    tabs: [{ id: 42, url: "https://www.douyin.com/" }],
+    local: { records: [{
+      id: "observed", siteId: "douyin", siteName: "抖音", attemptedAt: startedAt, startedAt,
+      endedAt: null, plannedMs: 60000, elapsedMs: 0, reason: "test", outcome: "active",
+      activityVersion: 1, foregroundMs: 0, foregroundByDay: {}
+    }] },
+    session: { state: {
+      grants: { 42: { tabId: 42, siteId: "douyin", recordId: "observed", startedAt, expiresAt: startedAt + 60000 } },
+      pending: {},
+      attention: { tabId: 42, recordId: "observed", at: startedAt + 5000, snapshot: {
+        foregroundMs: 5000, foregroundByDay: { [key]: 5000 }
+      } }
+    } }
+  });
+  assert.equal(h.local.records[0].foregroundMs, 5000);
+  assert.equal(h.local.records[0].foregroundByDay[key], 5000);
 });

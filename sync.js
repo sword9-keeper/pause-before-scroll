@@ -64,11 +64,35 @@ function validateRecord(value) {
       typeof value.reason !== "string" || value.reason.length > 200) {
     throw new Error("同步文件含有无效的记录，本地数据未被替换。");
   }
-  return {
+  const record = {
     id: value.id, siteId: site.id, siteName: site.name,
     attemptedAt: value.attemptedAt, startedAt: value.startedAt, endedAt: value.endedAt,
     plannedMs: value.plannedMs, elapsedMs: value.elapsedMs, reason: value.reason, outcome: value.outcome
   };
+  if (value.activityVersion !== undefined) {
+    const days = value.foregroundByDay;
+    if (value.activityVersion !== 1 || !Number.isSafeInteger(value.foregroundMs) ||
+        value.foregroundMs < 0 || value.foregroundMs > value.plannedMs ||
+        !days || typeof days !== "object" || Array.isArray(days) || Object.keys(days).length > 4) {
+      throw new Error("同步记录的前台观测数据无效。");
+    }
+    let sum = 0;
+    for (const [day, amount] of Object.entries(days)) {
+      const date = new Date(`${day}T00:00:00Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(date.getTime()) ||
+          date.toISOString().slice(0, 10) !== day || !Number.isSafeInteger(amount) || amount < 0) {
+        throw new Error("同步记录的每日前台观测数据无效。");
+      }
+      sum += amount;
+    }
+    if (sum !== value.foregroundMs) throw new Error("同步记录的前台观测总量不一致。");
+    Object.assign(record, { activityVersion: 1, foregroundMs: value.foregroundMs, foregroundByDay: { ...days } });
+  }
+  if (value.finishIntent !== undefined) {
+    if (value.finishIntent !== "done") throw new Error("同步记录的结束意图无效。");
+    record.finishIntent = value.finishIntent;
+  }
+  return record;
 }
 
 export function validateDocument(value) {
@@ -104,7 +128,11 @@ export function mergeDocuments(local, remote, syncRecords = true) {
     if (deleted.has(record.id)) continue;
     const previous = records.get(record.id);
     // Finished records are immutable. A deterministic tie-break also handles restored backups.
-    if (!previous || JSON.stringify(record) > JSON.stringify(previous)) records.set(record.id, record);
+    const richness = item => Number(item.activityVersion === 1) * 2 + Number(item.finishIntent === "done");
+    if (!previous || richness(record) > richness(previous) ||
+        (richness(record) === richness(previous) && JSON.stringify(record) > JSON.stringify(previous))) {
+      records.set(record.id, record);
+    }
   }
   return {
     app: "back-to-flow", schemaVersion: 1, settings,

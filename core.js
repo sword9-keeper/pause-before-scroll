@@ -6,7 +6,7 @@ export const SITES = [
 
 export const DEFAULT_SETTINGS = {
   exitUrl: "https://www.google.com/",
-  quote: "什么都无法舍弃的人，什么都无法做到。",
+  quote: "先停一下。接下来，由你决定。",
   reasons: ["查找资料", "看指定内容", "休息一下"],
   warningSeconds: 60,
   enabledSites: SITES.map(site => site.id)

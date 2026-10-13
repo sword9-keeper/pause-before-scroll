@@ -1,5 +1,6 @@
 import { formatDuration } from "./core.js";
 import { permissionOrigin, validateSyncConfig } from "./sync.js";
+import { buildInsights, readableTime, compactTime, dayKey } from "./insights.js";
 
 const $ = selector => document.querySelector(selector);
 $("#version").textContent = `v${chrome.runtime.getManifest().version}`;
@@ -7,6 +8,9 @@ let records = [];
 let settingsDirty = false;
 let syncDirty = false;
 let savedSync;
+let overviewDays = 7;
+let overviewCache;
+const views = ["overview", "records", "settings", "sync"];
 const outcomes = {
   pending: "尚未选择", active: "进行中", declined: "选择离开",
   dismissed: "关闭确认页 / 离开", expired: "时间到", closed: "主动关页",
@@ -31,6 +35,7 @@ function elapsed(record) {
 }
 
 function render() {
+  renderOverview();
   const filtered = records.filter(record =>
     (!$("#date-filter").value || localDate(record.attemptedAt) === $("#date-filter").value) &&
     (!$("#site-filter").value || record.siteId === $("#site-filter").value));
@@ -46,7 +51,8 @@ function render() {
       record.siteName, record.reason || "—",
       record.plannedMs ? formatDuration(record.plannedMs) : "—",
       record.elapsedMs === null ? "未知" : record.startedAt ? formatDuration(elapsed(record)) : "—",
-      outcomes[record.outcome] || record.outcome
+      record.activityVersion === 1 ? formatDuration(record.foregroundMs) : "未观测",
+      record.finishIntent === "done" ? "主动结束" : outcomes[record.outcome] || record.outcome
     ];
     for (const text of cells) {
       const cell = document.createElement("td");
@@ -62,15 +68,79 @@ function render() {
 
 function showError(error) { $("#status").textContent = error.message; }
 
-for (const name of ["records", "settings", "sync"]) {
-  $(`#${name}-tab`).addEventListener("click", () => {
-    for (const other of ["records", "settings", "sync"]) {
-      $(`#${other}-panel`).hidden = other !== name;
-      $(`#${other}-tab`).classList.toggle("active", other === name);
-      $(`#${other}-tab`).setAttribute("aria-pressed", String(other === name));
-    }
-    $("#status").textContent = "";
+function openView(name) {
+  for (const other of views) {
+    $(`#${other}-panel`).hidden = other !== name;
+    $(`#${other}-tab`).classList.toggle("active", other === name);
+    $(`#${other}-tab`).setAttribute("aria-pressed", String(other === name));
+  }
+  $("#status").textContent = "";
+}
+for (const name of views) $(`#${name}-tab`).addEventListener("click", () => openView(name));
+$("#manage-sites").addEventListener("click", () => openView("settings"));
+for (const button of document.querySelectorAll("[data-period]")) {
+  button.addEventListener("click", () => {
+    overviewDays = Number(button.dataset.period);
+    for (const other of document.querySelectorAll("[data-period]")) other.setAttribute("aria-pressed", String(other === button));
+    renderOverview();
   });
+}
+
+function renderOverview() {
+  const today = dayKey(Date.now());
+  if (overviewCache?.records === records && overviewCache.days === overviewDays && overviewCache.today === today) return;
+  overviewCache = { records, days: overviewDays, today };
+  const data = buildInsights(records, { days: overviewDays });
+  $("#overview-range").textContent = `${data.daily[0].label} 至 ${data.daily.at(-1).label}`;
+  $("#insight-foreground").textContent = data.observedRecords ? compactTime(data.foregroundMs) : "未观测";
+  $("#insight-entries").textContent = data.entries;
+  $("#insight-declined").textContent = data.declined;
+  $("#insight-done").textContent = data.endedEarly;
+  $("#measurement-status").textContent = data.legacyVisits ? `${data.legacyVisits} 次旧访问未观测前台时间` :
+    data.observedRecords ? "仅已观测区间" : "等待首次记录";
+  const peak = Math.max(60000, ...data.daily.map(day => day.foregroundMs));
+  const chart = document.createDocumentFragment();
+  for (const [index, day] of data.daily.entries()) {
+    const column = document.createElement("div");
+    column.className = "day-column";
+    column.setAttribute("role", "listitem");
+    const duration = day.observedRecords ? readableTime(day.foregroundMs) : day.entries ? "未观测" : "无记录";
+    column.setAttribute("aria-label", `${day.key}：${duration}，进入 ${day.entries} 次`);
+    column.title = column.getAttribute("aria-label");
+    const track = document.createElement("div");
+    track.className = "day-track";
+    const bar = document.createElement("span");
+    bar.className = "day-bar";
+    bar.style.height = `${day.foregroundMs / peak * 100}%`;
+    track.append(bar);
+    const label = document.createElement("span");
+    label.className = "day-label";
+    label.textContent = overviewDays === 7 || index % 7 === 0 && index < data.daily.length - 7 ||
+      index === data.daily.length - 1 ? day.label : "";
+    column.append(track, label);
+    chart.append(column);
+  }
+  $("#daily-chart").style.setProperty("--days", String(data.daily.length));
+  $("#daily-chart").dataset.compact = String(overviewDays > 7);
+  $("#daily-chart").replaceChildren(chart);
+  const sites = document.createDocumentFragment();
+  for (const site of data.sites) {
+    const row = document.createElement("div");
+    row.className = "site-row";
+    const name = document.createElement("strong");
+    name.textContent = site.name;
+    const counts = document.createElement("span");
+    counts.textContent = `进入 ${site.entries} 次 · 选择离开 ${site.declined} 次`;
+    const duration = document.createElement("span");
+    duration.className = "site-duration";
+    duration.textContent = site.observedRecords ? readableTime(site.foregroundMs) : "未观测";
+    row.append(name, counts, duration);
+    sites.append(row);
+  }
+  $("#site-summary").replaceChildren(sites);
+  $("#overview-empty").hidden = data.sites.length > 0;
+  $("#decision-summary").textContent = data.decisions ?
+    `${data.decisions} 次明确选择中，${data.declined} 次没有继续进入网站。` : "";
 }
 $("#date-filter").value = localDate(Date.now());
 $("#date-filter").addEventListener("change", render);
@@ -116,7 +186,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
     request("syncStatus").then(data => renderSync(data)).catch(showError);
   }
 });
-setInterval(render, 1000);
+setInterval(() => {
+  if (!$("#records-panel").hidden && records.some(record => record.outcome === "active")) render();
+  else if (!$("#overview-panel").hidden) renderOverview();
+}, 1000);
 
 function fillSettings(settings) {
   $("#exit-url").value = settings.exitUrl;

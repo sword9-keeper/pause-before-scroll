@@ -145,3 +145,21 @@ test("the device limit does not create an unreadable thirty-third snapshot", asy
   assert.equal(dav.files.size, 32);
   assert.equal(dav.requests.filter(request => request.method === "PUT").length, 0);
 });
+
+test("foreground observations round-trip and survive old-client snapshots that omit new fields", () => {
+  const measured = {
+    ...record("one"), activityVersion: 1, foregroundMs: 1000,
+    foregroundByDay: { "2026-10-13": 1000 }, finishIntent: "done"
+  };
+  const modern = validateDocument(doc("a", [measured], 2));
+  assert.deepEqual(modern.records[0], measured);
+  const legacy = doc("b", [record("one")], 1);
+  assert.deepEqual(mergeDocuments(modern, legacy).records[0], measured);
+  assert.deepEqual(mergeDocuments(legacy, modern).records[0], measured);
+  for (const broken of [
+    { ...measured, foregroundMs: 1001 },
+    { ...measured, foregroundByDay: { "2026-02-31": 1000 } },
+    { ...measured, foregroundByDay: { "2026-10-13": -1000 }, foregroundMs: -1000 },
+    { ...measured, foregroundMs: 60001, foregroundByDay: { "2026-10-13": 60001 } }
+  ]) assert.throws(() => validateDocument(doc("a", [broken])));
+});

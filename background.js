@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS, siteFor as matchSite, targetUrl, pauseTarget, validateGrant, validateSettings } from "./core.js";
 import { DEFAULT_SYNC_CONFIG, validateSyncConfig, permissionOrigin, nextRevision, compareRevision, mergeDocuments, syncWebDAV } from "./sync.js";
 import installDefaults from "./install-defaults.js";
+import { creditForeground, buildInsights } from "./insights.js";
 
 const pausePage = chrome.runtime.getURL("pause.html");
 let state = { grants: {}, pending: {} };
@@ -14,6 +15,7 @@ let syncMeta;
 let syncFlight;
 let syncController;
 let syncGeneration = 0;
+let lastActivityFlushAt = 0;
 
 function siteFor(raw) {
   return matchSite(raw, settings?.enabledSites);
@@ -32,6 +34,7 @@ function schedule(work) {
 async function persist() {
   await chrome.storage.session.set({ state });
   await chrome.storage.local.set({ records, settings, syncMeta });
+  lastActivityFlushAt = Date.now();
 }
 
 function protectedRecordIds() {
@@ -150,9 +153,44 @@ function recordById(id) {
   return records.find(record => record.id === id);
 }
 
+function settleForeground(at = Date.now()) {
+  const previous = state.attention;
+  if (!previous) return false;
+  creditForeground(recordById(previous.recordId), previous.at, at);
+  state.attention = null;
+  return true;
+}
+
+async function observeForeground(tabId, grant, visible) {
+  if (visible !== true) {
+    if (state.attention?.tabId === tabId && settleForeground()) await persist();
+    return;
+  }
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const window = tab && await chrome.windows.get(tab.windowId).catch(() => null);
+  const current = navigations.get(tabId)?.url || tab?.url;
+  if (!tab?.active || !window?.focused || window.state === "minimized" || siteFor(current)?.id !== grant.siteId) {
+    if (state.attention?.tabId === tabId && settleForeground()) await persist();
+    return;
+  }
+  const at = Date.now();
+  settleForeground(at);
+  const record = recordById(grant.recordId);
+  state.attention = {
+    tabId, recordId: grant.recordId, at,
+    snapshot: record.activityVersion === 1 ? {
+      foregroundMs: record.foregroundMs, foregroundByDay: { ...record.foregroundByDay }
+    } : null
+  };
+  // Keep frequent samples in session memory; checkpoint history on transitions or every 30 seconds.
+  if (at - lastActivityFlushAt >= 30000) await persist();
+  else await chrome.storage.session.set({ state });
+}
+
 async function finish(tabId, outcome, close = false) {
   const grant = state.grants[tabId];
   if (!grant) return;
+  if (state.attention?.tabId === tabId) settleForeground();
   await chrome.alarms.clear(`expire:${tabId}`);
   const record = recordById(grant.recordId);
   const siblings = Object.values(state.grants).filter(item => item.tabId !== tabId && item.recordId === grant.recordId);
@@ -236,7 +274,8 @@ async function ensurePending(tabId, target) {
   const record = {
     id: crypto.randomUUID(), siteId: site.id, siteName: site.name,
     attemptedAt: Date.now(), startedAt: null, endedAt: null,
-    plannedMs: 0, elapsedMs: 0, reason: "", outcome: "pending"
+    plannedMs: 0, elapsedMs: 0, reason: "", outcome: "pending",
+    activityVersion: 1, foregroundMs: 0, foregroundByDay: {}
   };
   records.push(record);
   state.pending[tabId] = { target, recordId: record.id };
@@ -329,7 +368,11 @@ function observeNavigation(details, phase) {
   // Newer navigations invalidate queued work for the old destination.
   const navigation = { url: details.url, documentId: details.documentId, phase };
   navigations.set(details.tabId, navigation);
-  schedule(() => checkNavigation(details, navigation));
+  const at = Date.now();
+  schedule(async () => {
+    if (phase === "before" && state.attention?.tabId === details.tabId && settleForeground(at)) await persist();
+    await checkNavigation(details, navigation);
+  });
 }
 
 async function bootstrap() {
@@ -359,11 +402,23 @@ async function bootstrap() {
   state.sources ||= {};
   const tabs = await chrome.tabs.query({});
   const liveIds = new Set(tabs.map(tab => tab.id));
+  if (state.attention && !liveIds.has(state.attention.tabId)) state.attention = null;
   for (const id of Object.keys(state.sources)) {
     if (!liveIds.has(Number(id))) delete state.sources[id];
   }
   for (const grant of Object.values(state.grants)) {
     if (!liveIds.has(grant.tabId) || !recordById(grant.recordId)) delete state.grants[grant.tabId];
+  }
+  if (state.attention && (state.grants[state.attention.tabId]?.recordId !== state.attention.recordId ||
+      recordById(state.attention.recordId)?.outcome !== "active")) state.attention = null;
+  if (state.attention?.snapshot) {
+    const record = recordById(state.attention.recordId);
+    const snapshot = state.attention.snapshot;
+    if (record.activityVersion === 1 && Number.isSafeInteger(snapshot.foregroundMs) &&
+        snapshot.foregroundMs >= record.foregroundMs && snapshot.foregroundMs <= record.plannedMs) {
+      record.foregroundMs = snapshot.foregroundMs;
+      record.foregroundByDay = { ...snapshot.foregroundByDay };
+    }
   }
   for (const tabId of Object.keys(state.pending)) {
     if (!liveIds.has(Number(tabId)) || !recordById(state.pending[tabId].recordId)) abandon(tabId);
@@ -414,13 +469,25 @@ chrome.alarms.onAlarm.addListener(alarm => {
 });
 chrome.tabs.onRemoved.addListener(tabId => {
   navigations.delete(tabId);
+  const at = Date.now();
   schedule(async () => {
+    if (state.attention?.tabId === tabId) settleForeground(at);
     const hadSource = Boolean(state.sources[tabId]);
     delete state.sources[tabId];
     await finish(tabId, "closed");
     const abandoned = abandon(tabId);
     if (abandoned || hadSource) await persist();
   });
+});
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  const at = Date.now();
+  schedule(async () => {
+    if (state.attention && state.attention.tabId !== tabId && settleForeground(at)) await persist();
+  });
+});
+chrome.windows.onFocusChanged.addListener(() => {
+  const at = Date.now();
+  schedule(async () => { if (settleForeground(at)) await persist(); });
 });
 chrome.webNavigation.onCreatedNavigationTarget.addListener(details => {
   schedule(() => captureSource(details.tabId, details.sourceTabId, details.url));
@@ -491,7 +558,7 @@ async function isCurrentDocument(sender) {
 }
 
 async function handle(message, sender) {
-  if (["timer", "expire", "timerLayout"].includes(message.type)) {
+  if (["timer", "expire", "timerLayout", "endVisit"].includes(message.type)) {
     const tabId = sender.tab?.id;
     const site = siteFor(sender.url);
     if (!matchSite(sender.url) || sender.frameId !== 0) throw new Error("无效的计时来源。");
@@ -504,10 +571,21 @@ async function handle(message, sender) {
       return null;
     }
     if (!grant || grant.siteId !== site.id) {
+      if (message.type === "endVisit") return { ended: false };
       if (grant) await finish(tabId, "left");
       await showPause(tabId, sender.url, navigations.get(tabId));
       return null;
     }
+    if (message.type === "endVisit") {
+      const group = Object.values(state.grants).filter(item => item.recordId === grant.recordId);
+      if (group.length > 1 && message.confirmedTabs !== group.length) {
+        return { confirmationRequired: true, tabCount: group.length };
+      }
+      recordById(grant.recordId).finishIntent = "done";
+      for (const related of group) await finish(related.tabId, "left", true);
+      return { ended: true };
+    }
+    if (message.type === "timer") await observeForeground(tabId, grant, message.foreground);
     if (message.type === "timerLayout") {
       const layout = message.layout;
       if (!layout || !Number.isFinite(layout.x) || !Number.isFinite(layout.y) ||
@@ -515,7 +593,11 @@ async function handle(message, sender) {
       timerLayout = { x: Math.max(0, Math.min(1, layout.x)), y: Math.max(0, Math.min(1, layout.y)), collapsed: layout.collapsed };
       await chrome.storage.local.set({ timerLayout });
     }
-    return { expiresAt: grant.expiresAt, warningSeconds: settings.warningSeconds, timerLayout };
+    return {
+      expiresAt: grant.expiresAt, warningSeconds: settings.warningSeconds, timerLayout,
+      reason: recordById(grant.recordId)?.reason || "",
+      relatedTabs: Object.values(state.grants).filter(item => item.recordId === grant.recordId).length
+    };
   }
   if (["inspect", "continue", "leave"].includes(message.type)) {
     requirePage(sender, "pause.html");
@@ -534,7 +616,10 @@ async function handle(message, sender) {
         record.endedAt = null;
         await persist();
       }
-      return { site, settings };
+      const previous = records.filter(item => item.siteId === site.id && item.id !== pending.recordId);
+      const today = buildInsights(previous, { days: 1 });
+      const recentReturn = previous.some(item => item.endedAt && item.endedAt <= Date.now() && Date.now() - item.endedAt < 120000);
+      return { site, settings, today, recentReturn };
     }
     const pending = state.pending[tabId];
     if (!pending || pending.target !== target) throw new Error("页面状态已更新，请刷新后重试。");

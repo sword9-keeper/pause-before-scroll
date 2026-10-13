@@ -14,11 +14,33 @@
   </header>
   <main class="journal-main">
     <nav class="tabs" aria-label="页面">
-      <button id="records-tab" class="tab active" aria-pressed="true">记录</button>
+      <button id="overview-tab" class="tab active" aria-pressed="true">回顾</button>
+      <button id="records-tab" class="tab" aria-pressed="false">记录</button>
       <button id="settings-tab" class="tab" aria-pressed="false">设置</button>
       <button id="sync-tab" class="tab" aria-pressed="false">同步</button>
     </nav>
-    <section id="records-panel">
+    <section id="overview-panel">
+      <div class="section-heading">
+        <div><h1>时间，花在自己的选择上</h1><p id="overview-range" class="range-label"></p></div>
+        <div class="period-control" aria-label="回顾周期">
+          <button type="button" data-period="7" aria-pressed="true">近 7 天</button>
+          <button type="button" data-period="30" aria-pressed="false">近 30 天</button>
+        </div>
+      </div>
+      <dl class="stats overview-stats">
+        <div><dt title="已观测到的聚焦窗口、活动标签页时间，不等同于实际观看或注意力">前台浏览</dt><dd id="insight-foreground">未观测</dd></div>
+        <div><dt>进入网站</dt><dd id="insight-entries">0</dd></div>
+        <div><dt>打开前选择离开</dt><dd id="insight-declined">0</dd></div>
+        <div><dt>提前结束并关闭</dt><dd id="insight-done">0</dd></div>
+      </dl>
+      <div class="section-heading"><h2>每天的前台浏览</h2><span id="measurement-status" class="range-label"></span></div>
+      <div id="daily-chart" class="daily-chart" role="list" aria-label="每日前台浏览时长"></div>
+      <div class="section-heading site-heading"><h2>网站</h2><button id="manage-sites" class="text-button" type="button">管理网站</button></div>
+      <div id="site-summary" class="site-summary"></div>
+      <p id="overview-empty" class="empty">还没有浏览记录。</p>
+      <p id="decision-summary" class="decision-summary"></p>
+    </section>
+    <section id="records-panel" hidden>
       <div class="section-heading"><h1>浏览记录</h1><button id="export" class="secondary">导出 JSON</button></div>
       <div class="filters">
         <label>日期<input id="date-filter" type="date"></label>
@@ -29,10 +51,10 @@
         <div><dt>访问尝试</dt><dd id="attempt-count">0</dd></div>
         <div><dt>选择进入</dt><dd id="visit-count">0</dd></div>
         <div><dt>选择离开</dt><dd id="decline-count">0</dd></div>
-        <div><dt>已记录时长</dt><dd id="total-time">0:00</dd></div>
+        <div><dt>访问经过时间</dt><dd id="total-time">0:00</dd></div>
       </dl>
       <div class="table-scroll">
-        <table><thead><tr><th>时间</th><th>网站</th><th>用途</th><th>计划</th><th>实际</th><th>结束方式</th></tr></thead><tbody id="record-rows"></tbody></table>
+        <table><thead><tr><th>时间</th><th>网站</th><th>用途</th><th>计划</th><th>经过</th><th>前台</th><th>结束方式</th></tr></thead><tbody id="record-rows"></tbody></table>
       </div>
       <p id="empty" class="empty" hidden>这段时间还没有记录。</p>
       <div class="records-footer"><button id="clear" class="text-button danger">清除已结束的记录</button><span id="record-count"></span></div>

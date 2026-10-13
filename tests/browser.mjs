@@ -224,6 +224,7 @@ try {
 
   const journal = await context.newPage();
   await journal.goto(`${extension}/journal.html`);
+  await journal.locator("#records-tab").click();
   await eventually(async () => Number(await journal.locator("#attempt-count").textContent()) > 0, "journal data");
   assert.equal(await journal.locator("#version").textContent(), `v${await worker.evaluate(() => chrome.runtime.getManifest().version)}`);
   await journal.screenshot({ path: path.join(output, "journal-desktop.png"), fullPage: true });

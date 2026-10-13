@@ -8,7 +8,8 @@
     "test:e2e": "node tests/browser.mjs",
     "test:upgrade": "node tests/upgrade.mjs",
     "test:sync": "node tests/sync-browser.mjs",
-    "test:personal": "node tests/personal-browser.mjs"
+    "test:personal": "node tests/personal-browser.mjs",
+    "test:value": "node tests/value-browser.mjs"
   },
   "devDependencies": {
     "@rgrove/parse-xml": "5.0.0",

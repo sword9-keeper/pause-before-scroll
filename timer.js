@@ -8,6 +8,8 @@
   let layout = { x: 1, y: 0, collapsed: false };
   let initialized = false;
   let drag;
+  let reason = "";
+  let relatedTabs = 1;
 
   function position() {
     if (!host) return;
@@ -43,6 +45,8 @@
       .collapsed .label { display:none; }
       .label { font-size:12px; }
       strong { min-width:5ch; text-align:center; }
+      .done { width:auto; max-width:110px; font:12px/1.5 system-ui; padding:3px 7px;
+        border:1px solid #aebfb5; color:#22543d; white-space:normal; }
     `;
     const clock = document.createElement("div");
     clock.className = "clock";
@@ -56,6 +60,26 @@
     value.setAttribute("role", "timer");
     label.className = "label";
     const toggle = document.createElement("button");
+    const done = document.createElement("button");
+    done.className = "done";
+    done.textContent = "结束并关闭";
+    done.addEventListener("click", async () => {
+      done.disabled = true;
+      try {
+        let response = await chrome.runtime.sendMessage({ type: "endVisit" });
+        while (response?.ok && response.data?.confirmationRequired) {
+          const count = response.data.tabCount;
+          if (!confirm(`结束本次浏览并关闭 ${count} 个相关标签页？请先保存未完成的内容。`)) return;
+          response = await chrome.runtime.sendMessage({ type: "endVisit", confirmedTabs: count });
+        }
+        if (!response?.ok) {
+          done.title = response?.error || "操作失败，请重试";
+          return;
+        }
+        if (response.data?.ended) { deadline = null; host?.remove(); }
+      } catch { host?.remove(); }
+      finally { done.disabled = false; }
+    });
     function appearance() {
       clock.classList.toggle("collapsed", layout.collapsed);
       toggle.textContent = layout.collapsed ? "+" : "\u2212";
@@ -100,11 +124,12 @@
       position();
       saveLayout();
     });
-    clock.append(grip, label, value, toggle);
+    clock.append(grip, label, value, done, toggle);
     root.append(style, clock);
     host._clock = clock;
     host._label = label;
     host._value = value;
+    host._done = done;
     document.documentElement.append(host);
     appearance();
   }
@@ -112,10 +137,14 @@
   async function sync(type = "timer") {
     lastSync = Date.now();
     try {
-      const response = await chrome.runtime.sendMessage({ type });
+      const response = await chrome.runtime.sendMessage({
+        type, foreground: document.visibilityState === "visible" && document.hasFocus()
+      });
       if (response?.ok && response.data) {
         deadline = response.data.expiresAt;
         warningSeconds = response.data.warningSeconds;
+        reason = response.data.reason || "";
+        relatedTabs = response.data.relatedTabs || 1;
         if (!initialized) {
           layout = response.data.timerLayout || layout;
           initialized = true;
@@ -131,7 +160,7 @@
   }
 
   function tick() {
-    if (Date.now() - lastSync > 15000) void sync();
+    if (Date.now() - lastSync > (document.hidden ? 15000 : 5000)) void sync();
     if (!deadline) return;
     mount();
     if (!host) return;
@@ -140,7 +169,8 @@
     host._clock.classList.toggle("warning", warning);
     host._label.textContent = warning ? "标签页即将关闭" : "本次剩余";
     host._value.textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
-    host._clock.title = warning ? "本次浏览即将结束，到期关闭相关标签页" : "本次浏览剩余时间";
+    host._clock.title = warning ? "本次浏览即将结束，到期关闭相关标签页" : `这次是为了：${reason}`;
+    host._done.title = `结束本次浏览并关闭 ${relatedTabs} 个相关标签页`;
     position();
     if (remaining === 0 && !expiring) {
       expiring = true;
@@ -150,6 +180,8 @@
 
   document.addEventListener("visibilitychange", () => { void sync().then(tick); });
   window.addEventListener("pageshow", () => { void sync().then(tick); });
+  window.addEventListener("focus", () => { void sync().then(tick); });
+  window.addEventListener("blur", () => { void sync().then(tick); });
   window.addEventListener("resize", position);
   void sync().then(tick);
   timer = setInterval(tick, 500);

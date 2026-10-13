@@ -12,7 +12,7 @@ const extensionPath = path.join(work, "extension");
 const output = path.join(root, "test-results");
 await mkdir(extensionPath);
 await mkdir(output, { recursive: true });
-for (const file of ["manifest.json", "core.js", "background.js", "sync.js", "install-defaults.js", "vendor", "pause.html", "pause.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
+for (const file of ["manifest.json", "core.js", "background.js", "sync.js", "install-defaults.js", "insights.js", "vendor", "pause.html", "pause.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
   await cp(path.join(root, file), path.join(extensionPath, file), { recursive: true });
 }
 const manifest = JSON.parse(await readFile(path.join(extensionPath, "manifest.json"), "utf8"));
