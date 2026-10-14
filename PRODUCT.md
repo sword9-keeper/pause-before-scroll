@@ -42,9 +42,15 @@ established by shipping features or passing automated tests.
 
 ## Roadmap and Evidence
 
+The owner confirmed the intention to distribute publicly on 2026-10-14.
+The source is currently hosted privately; public release remains a separate,
+explicit decision. [SYNC_PLAN.md](SYNC_PLAN.md) preserves the Google Drive,
+Chrome sync and WebDAV analysis, the proposed scope and uncompleted acceptance.
+
 | Workstream | Status | Evidence Required |
 | --- | --- | --- |
 | Recoverable sync baseline | Complete | Local commit 5e87282; unit, sync, upgrade and personal-build tests |
+| Optional Google Drive sync | Planned for the public-distribution roadmap; not implemented | SYNC_PLAN.md; narrow OAuth scopes, stable extension identity and migration, settings-only default, provider/account isolation, real Windows/Mac authorization and two-device acceptance |
 | Honest foreground observations | Implemented and technically verified | Unit invariants, sleep-gap and worker-recovery checks; real Chromium focus/background checks; sync preservation |
 | Intentional early exit | Implemented and technically verified | Browser stop/cancel/confirm checks; unit stale-document, unrelated-tab and shared-grant checks |
 | Understandable personal overview | Implemented and technically verified | Unit day aggregation and legacy-unknown checks; real Chromium 1280/390/320 px screenshots; macOS user validation pending |
