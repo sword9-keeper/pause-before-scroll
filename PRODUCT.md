@@ -49,11 +49,16 @@ established by shipping features or passing automated tests.
 | Intentional early exit | Implemented and technically verified | Browser stop/cancel/confirm checks; unit stale-document, unrelated-tab and shared-grant checks |
 | Understandable personal overview | Implemented and technically verified | Unit day aggregation and legacy-unknown checks; real Chromium 1280/390/320 px screenshots; macOS user validation pending |
 | First-run setup and custom sites | Implemented and technically verified | Fresh-profile first setup, narrow host grants, exact/path exceptions, SPA, permission-release preservation, independent-device authorization, and 1280/390/320 px checks; real permission-dialog, real-site and macOS validation pending |
-| Humane end-of-visit flow | Implemented and technically verified | Chromium draft/document preservation, media pause, fullscreen exit, keyboard/narrow layouts; unit race/mute/recovery checks; real-site and macOS validation pending |
+| Humane end-of-visit flow | Implemented and technically verified; partial live-site evidence | Chromium draft/document preservation, media pause, fullscreen exit, keyboard/narrow layouts; three anonymous real-site flows and one Bilibili video with near-deadline playback/fullscreen samples on Windows Chromium; authenticated workflows, other players and macOS pending |
 | Optional daily self-review | Implemented and technically verified | Unit consent, unknown/zero, dates, revision and export checks; Chromium two-window conflicts, opt-out, deletion, no added network requests and 1280/390/320 px layouts; real-user and macOS validation pending |
 | Opt-in efficacy pilot | Protocol and descriptive analysis tooling prepared; not run | PILOT.md and synthetic analysis tests are preparation only; real consenting users, comparable baseline/intervention data, dropout and adverse effects remain missing |
 | Public distribution | Not started | Store-ready artifact, privacy policy, signed-off listing, real macOS check |
 | Adoption and sustained value | Unproven | Real activation, retention, feedback, reduced unwanted use, not downloads alone |
+
+The 0.8.1 live-site investigation found and fixed a real scrollbar-dependent timer
+clipping defect that earlier hidden-scrollbar fixtures missed. `LIVE_TEST.md`
+separates failed attempts, visual review, native permission gaps and real playback
+evidence. This is usability evidence, not behavioral efficacy.
 
 ## Measurement and Pilot Gate
 

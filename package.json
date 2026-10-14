@@ -12,7 +12,9 @@
     "test:value": "node tests/value-browser.mjs",
     "test:expiry": "node tests/expiry-browser.mjs",
     "test:sites": "node tests/sites-browser.mjs",
-    "test:reviews": "node tests/reviews-browser.mjs"
+    "test:reviews": "node tests/reviews-browser.mjs",
+    "test:live": "node tests/live-browser.mjs",
+    "test:timer-layout": "node tests/timer-layout-browser.mjs"
   },
   "devDependencies": {
     "@rgrove/parse-xml": "5.0.0",

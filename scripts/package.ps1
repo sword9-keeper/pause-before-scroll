@@ -7,7 +7,7 @@ $files = @(
     "manifest.json", "core.js", "rules.js", "background.js", "sync.js", "install-defaults.js", "insights.js",
     "pause.html", "pause.js", "expiry.js", "timer.js",
     "journal.html", "journal.js", "site-editor.js", "reviews.js", "review-editor.js", "style.css",
-    "README.md", "HANDOFF.md", "PRODUCT.md", "PILOT.md", "vendor"
+    "README.md", "HANDOFF.md", "PRODUCT.md", "PILOT.md", "LIVE_TEST.md", "vendor"
 ) | ForEach-Object { Join-Path $root $_ }
 $output = Join-Path $root "artifacts"
 New-Item -ItemType Directory -Path $output -Force | Out-Null

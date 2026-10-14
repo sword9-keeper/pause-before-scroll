@@ -70,11 +70,18 @@
     }
   }
 
+  function viewportSize() {
+    const root = document.compatMode === "BackCompat" ? document.body : document.documentElement;
+    return { width: root?.clientWidth || innerWidth, height: root?.clientHeight || innerHeight };
+  }
+
   function position() {
     if (!host) return;
+    const viewport = viewportSize();
+    host.style.maxWidth = `${Math.max(0, viewport.width - 16)}px`;
     const bounds = host.getBoundingClientRect();
-    host.style.left = `${8 + layout.x * Math.max(0, innerWidth - bounds.width - 16)}px`;
-    host.style.top = `${8 + layout.y * Math.max(0, innerHeight - bounds.height - 16)}px`;
+    host.style.left = `${8 + layout.x * Math.max(0, viewport.width - bounds.width - 16)}px`;
+    host.style.top = `${8 + layout.y * Math.max(0, viewport.height - bounds.height - 16)}px`;
   }
 
   function saveLayout() {
@@ -85,12 +92,13 @@
     if (!document.documentElement || host?.isConnected) return;
     host = document.createElement("div");
     host.id = "pause-before-scroll-timer";
-    host.style.cssText = "all:initial;position:fixed;left:8px;top:8px;z-index:2147483647;";
+    // Auto width shrinks against the right edge before labels render or scrollbars appear.
+    host.style.cssText = "all:initial;position:fixed;width:max-content;left:8px;top:8px;z-index:2147483647;";
     const root = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
       .clock { box-sizing:border-box; display:flex; align-items:center; gap:8px;
-        max-width:calc(100vw - 16px); padding:6px 8px; border:1px solid #cbd5ce;
+        width:max-content; max-width:100%; min-height:50px; padding:6px 8px; border:1px solid #cbd5ce;
         border-radius:6px; background:#fff; color:#24352c;
         font:14px/1.5 system-ui,sans-serif; box-shadow:0 2px 10px #0002; }
       .warning { background:#fff1ee; border-color:#df654e; color:#a22c21; }
@@ -102,10 +110,11 @@
       button:focus-visible { outline:2px solid #287b58; }
       .drag { cursor:grab; touch-action:none; }
       .collapsed .label { display:none; }
-      .label { font-size:12px; }
-      strong { min-width:5ch; text-align:center; }
+      .label { font-size:12px; flex:0 0 4em; }
+      strong { width:7ch; flex:none; white-space:nowrap; text-align:center; }
       .done { width:auto; max-width:110px; font:12px/1.5 system-ui; padding:3px 7px;
         border:1px solid #aebfb5; color:#22543d; white-space:normal; }
+      @media(max-width:360px) { .clock { gap:4px; padding-inline:4px; } }
     `;
     const clock = document.createElement("div");
     clock.className = "clock";
@@ -161,9 +170,10 @@
     });
     grip.addEventListener("pointermove", event => {
       if (!drag) return;
+      const viewport = viewportSize();
       const bounds = host.getBoundingClientRect();
-      layout.x = Math.max(0, Math.min(1, (event.clientX - drag.x - 8) / Math.max(1, innerWidth - bounds.width - 16)));
-      layout.y = Math.max(0, Math.min(1, (event.clientY - drag.y - 8) / Math.max(1, innerHeight - bounds.height - 16)));
+      layout.x = Math.max(0, Math.min(1, (event.clientX - drag.x - 8) / Math.max(1, viewport.width - bounds.width - 16)));
+      layout.y = Math.max(0, Math.min(1, (event.clientY - drag.y - 8) / Math.max(1, viewport.height - bounds.height - 16)));
       position();
     });
     for (const name of ["pointerup", "pointercancel", "lostpointercapture"]) {
