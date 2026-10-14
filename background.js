@@ -3,6 +3,7 @@ import { DEFAULT_SYNC_CONFIG, SYNC_VERSION, validateSyncConfig, permissionOrigin
 import { configuredSite, configuredSites, siteOrigin, matchesHost } from "./rules.js";
 import installDefaults from "./install-defaults.js";
 import { creditForeground, buildInsights } from "./insights.js";
+import { reviewView, updateReviews, exportReviews } from "./reviews.js";
 
 const pausePage = chrome.runtime.getURL("pause.html");
 let state = { grants: {}, pending: {} };
@@ -814,6 +815,16 @@ async function handle(message, sender) {
   if (["inspect", "continue", "leave"].includes(message.type)) {
     requirePage(sender, "pause.html");
     const tabId = sender.tab?.id;
+    const pendingTarget = state.pending[tabId]?.target;
+    const navigation = navigations.get(tabId);
+    // A hash-only redirect can precede pause.js loading. This is a read-only
+    // reload hint, never permission to act through an outdated sender URL.
+    if (message.type === "inspect" && pendingTarget && message.pageUrl === `${pausePage}#${pendingTarget}` &&
+        sender.url !== message.pageUrl && navigation &&
+        [pendingTarget, message.pageUrl].includes(navigation.url) &&
+        (!navigation.documentId || navigation.documentId === sender.documentId)) {
+      return { reload: true };
+    }
     if (!await isCurrentDocument(sender)) throw new Error("页面已经切换，请刷新后重试。");
     const target = pauseTarget(sender.url, pausePage);
     if (!target) throw new Error("不是有效的受限网站地址。");
@@ -864,6 +875,14 @@ async function handle(message, sender) {
     return null;
   }
   requirePage(sender, "journal.html");
+  if (["reviewGet", "reviewConfigure", "reviewSave", "reviewRemove", "reviewErase", "reviewExport"].includes(message.type)) {
+    const { selfReview } = await chrome.storage.local.get("selfReview");
+    if (message.type === "reviewGet") return reviewView(selfReview);
+    if (message.type === "reviewExport") return exportReviews(selfReview);
+    const updated = updateReviews(selfReview, message);
+    await chrome.storage.local.set({ selfReview: updated });
+    return reviewView(updated);
+  }
   if (message.type === "journal") return { settings, records, siteStatus: siteStatus() };
   if (message.type === "siteStatus") return siteStatus();
   if (message.type === "refreshSites") {

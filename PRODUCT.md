@@ -50,7 +50,8 @@ established by shipping features or passing automated tests.
 | Understandable personal overview | Implemented and technically verified | Unit day aggregation and legacy-unknown checks; real Chromium 1280/390/320 px screenshots; macOS user validation pending |
 | First-run setup and custom sites | Implemented and technically verified | Fresh-profile first setup, narrow host grants, exact/path exceptions, SPA, permission-release preservation, independent-device authorization, and 1280/390/320 px checks; real permission-dialog, real-site and macOS validation pending |
 | Humane end-of-visit flow | Implemented and technically verified | Chromium draft/document preservation, media pause, fullscreen exit, keyboard/narrow layouts; unit race/mute/recovery checks; real-site and macOS validation pending |
-| Opt-in efficacy pilot | Not started | Protocol, consenting users, baseline/intervention data, dropout and adverse effects |
+| Optional daily self-review | Implemented and technically verified | Unit consent, unknown/zero, dates, revision and export checks; Chromium two-window conflicts, opt-out, deletion, no added network requests and 1280/390/320 px layouts; real-user and macOS validation pending |
+| Opt-in efficacy pilot | Protocol and descriptive analysis tooling prepared; not run | PILOT.md and synthetic analysis tests are preparation only; real consenting users, comparable baseline/intervention data, dropout and adverse effects remain missing |
 | Public distribution | Not started | Store-ready artifact, privacy policy, signed-off listing, real macOS check |
 | Adoption and sustained value | Unproven | Real activation, retention, feedback, reduced unwanted use, not downloads alone |
 

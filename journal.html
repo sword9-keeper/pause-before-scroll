@@ -40,6 +40,43 @@
       <div id="site-summary" class="site-summary"></div>
       <p id="overview-empty" class="empty">还没有浏览记录。</p>
       <p id="decision-summary" class="decision-summary"></p>
+      <details id="self-review" class="self-review">
+        <summary>每日自评 <span id="review-availability">可选 · 仅本机</span></summary>
+        <form id="review-config">
+          <fieldset id="review-config-fields" disabled>
+            <label for="review-definition">我认为的非计划浏览 · 含其他设备</label>
+            <input id="review-definition" maxlength="200" autocomplete="off">
+            <label class="check-label"><input id="review-enabled" type="checkbox">自愿开启本机自评，不上传或参与 WebDAV 同步</label>
+            <button class="secondary" type="submit">保存自评设置</button>
+          </fieldset>
+        </form>
+        <form id="review-form" hidden>
+          <fieldset id="review-entry-fields">
+            <div class="review-form-grid">
+              <label>日期<input id="review-day" type="date" required></label>
+              <label>非计划浏览 · 自估分钟<input id="review-minutes" type="number" min="0" max="1440" step="1" placeholder="不确定可留空"></label>
+              <label>今天的浏览符合自己的打算吗<select id="review-fit" required><option value="">请选择</option></select></label>
+              <label>今天使用插件的情况<select id="review-protection"></select></label>
+              <label>是否转到别的设备或网站继续刷<select id="review-displacement"></select></label>
+              <label>插件是否妨碍学习、工作或必要沟通<select id="review-interference"></select></label>
+            </div>
+            <div class="review-criterion"><span>当日自评口径</span><p id="review-criterion"></p></div>
+            <button id="review-save" class="primary" type="submit">保存当日自评</button>
+          </fieldset>
+        </form>
+        <div class="section-heading review-heading"><h2>已结束的 14 天 · 自报分钟</h2></div>
+        <div id="review-periods" class="review-periods"></div>
+        <p id="review-comparison" class="range-label"></p>
+        <h3 id="review-history-heading" hidden>最近 14 条自评</h3>
+        <div id="review-history"></div>
+        <div class="review-actions">
+          <button id="review-export" class="secondary" type="button" disabled>导出自评 JSON</button>
+          <button id="review-reload" class="text-button" type="button" disabled>重新载入</button>
+          <button id="review-remove" class="text-button danger" type="button" disabled>删除当日自评</button>
+          <button id="review-erase" class="text-button danger" type="button" disabled>关闭并删除全部自评</button>
+        </div>
+        <p id="review-status" role="status"></p>
+      </details>
     </section>
     <section id="sites-panel" hidden>
       <h1 id="sites-heading">网站与例外</h1>

@@ -1,5 +1,6 @@
 import { formatDuration, SITES } from "./core.js";
 import { SiteEditor } from "./site-editor.js";
+import { ReviewEditor } from "./review-editor.js";
 import { permissionOrigin, validateSyncConfig } from "./sync.js";
 import { buildInsights, readableTime, compactTime, dayKey } from "./insights.js";
 
@@ -13,6 +14,7 @@ let overviewDays = 7;
 let overviewCache;
 const views = ["overview", "sites", "records", "settings", "sync"];
 const siteEditor = new SiteEditor(request, settings => { if (!settingsDirty) fillSettings(settings); });
+new ReviewEditor(request);
 const outcomes = {
   pending: "尚未选择", active: "进行中", declined: "选择离开",
   dismissed: "关闭确认页 / 离开", expired: "时间到", closed: "主动关页",

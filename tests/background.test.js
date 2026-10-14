@@ -104,6 +104,12 @@ async function harness(initial = {}) {
         if (rejectUpdates) throw new Error("Test navigation failure");
         if (!tabs.has(id)) throw new Error("No tab");
         const tab = tabs.get(id);
+        if (initial.sameDocumentGateUpdates && tab.url.startsWith(base) &&
+            tab.url.split("#")[0] === url.split("#")[0]) {
+          tab.url = url;
+          webNavigation.onReferenceFragmentUpdated.emit({ tabId: id, frameId: 0, url, documentId: tab.documentId });
+          return structuredClone(tab);
+        }
         tab.url = url;
         tab.documentId = `document-${++document}`;
         webNavigation.onCommitted.emit({ tabId: id, frameId: 0, url, documentId: tab.documentId });
@@ -1064,4 +1070,67 @@ test("upgrading sync adopts modern rule settings even when the saved legacy revi
   assert.equal(h.local.syncMeta.settingsBackup.value.quote, "old device edit");
   assert.equal(h.local.syncMeta.legacySettings, false);
   assert.equal((await h.send({ type: "siteStatus" })).data.sites.at(-1).granted, false);
+});
+
+test("self-review requires trusted UI consent, persists separately, and is absent from DAV and journal exports", async t => {
+  t.mock.method(console, "error", () => {});
+  const dav = createDav();
+  t.mock.method(globalThis, "fetch", dav.fetcher);
+  const h = await harness({ local: { syncConfig } });
+  await h.navigate("https://www.douyin.com/");
+  await h.send({ type: "continue", minutes: 5, reason: "test" }, h.sender());
+  await h.drain();
+  assert.equal(h.local.selfReview, undefined);
+  assert.equal((await h.send({ type: "reviewGet" }, h.sender())).ok, false);
+  const configured = await h.send({ type: "reviewConfigure", revision: 0, enabled: true, consent: true, definition: "Private personal criterion" });
+  assert.equal(configured.ok, true);
+  const saved = await h.send({ type: "reviewSave", revision: configured.data.state.revision, report: {
+    day: configured.data.today, unwantedMinutes: null, fit: "partly", protection: "yes", displacement: "unsure", interference: "some"
+  } });
+  assert.equal(saved.ok, true);
+  assert.equal(h.local.selfReview.reports.length, 1);
+  assert.equal((await h.send({ type: "journal" })).data.selfReview, undefined);
+  assert.equal((await h.send({ type: "syncNow" })).ok, true);
+  assert.ok([...dav.files.values()].every(text => !text.includes("Private personal criterion") && !text.includes("selfReview")));
+  assert.equal((await h.send({ type: "reviewGet" })).data.state.reports.length, 1);
+  await h.send({ type: "clear" });
+  assert.equal(h.local.selfReview.reports.length, 1);
+  await h.send({ type: "reviewErase", revision: saved.data.state.revision, confirmed: true });
+  assert.equal(h.local.selfReview.reports.length, 0);
+  assert.equal(h.local.records.length, 1);
+  assert.equal(h.local.records[0].outcome, "active");
+  assert.ok(h.session.state.grants[42]);
+});
+
+test("a damaged optional self-review store cannot disable site interception or lose its original data", async t => {
+  t.mock.method(console, "error", () => {});
+  const damaged = { schemaVersion: 999, privateData: "preserve" };
+  const h = await harness({ local: { selfReview: damaged } });
+  assert.equal((await h.send({ type: "reviewGet" })).ok, false);
+  await h.navigate("https://www.douyin.com/");
+  assert.ok(h.tabs.get(42).url.startsWith(`${base}pause.html#`));
+  assert.deepEqual(h.local.selfReview, damaged);
+});
+
+test("a retargeted gate gets only a read-only reload hint; stale decisions and an intervening exit remain rejected", async t => {
+  t.mock.method(console, "error", () => {});
+  const h = await harness({ sameDocumentGateUpdates: true });
+  await h.navigate("https://www.douyin.com/");
+  const original = h.sender();
+  const next = "https://www.bilibili.com/video/new#section";
+  h.chrome.webNavigation.onBeforeNavigate.emit({ tabId: 42, frameId: 0, url: next });
+  await h.drain();
+  const pageUrl = `${base}pause.html#${next}`;
+  assert.equal(h.tabs.get(42).url, pageUrl);
+  assert.equal(h.sender().documentId, original.documentId);
+  const records = structuredClone(h.local.records);
+  assert.deepEqual((await h.send({ type: "inspect", pageUrl }, original)).data, { reload: true });
+  assert.equal((await h.send({ type: "continue", pageUrl, minutes: 5, reason: "stale" }, original)).ok, false);
+  assert.equal((await h.send({ type: "leave", pageUrl }, original)).ok, false);
+  assert.deepEqual(h.local.records, records);
+  assert.deepEqual(h.session.state.grants, {});
+  h.chrome.webNavigation.onBeforeNavigate.emit({ tabId: 42, frameId: 0, url: "https://www.google.com/" });
+  assert.equal((await h.send({ type: "inspect", pageUrl }, original)).ok, false);
+  await h.drain();
+  assert.equal(h.tabs.get(42).url, pageUrl);
 });

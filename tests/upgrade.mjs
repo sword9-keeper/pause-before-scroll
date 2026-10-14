@@ -54,7 +54,7 @@ try {
   }, { ...DEFAULT_SETTINGS, quote: "Upgrade setting preserved." });
 
   for (const file of [
-    "manifest.json", "background.js", "core.js", "rules.js", "site-editor.js", "sync.js", "install-defaults.js", "insights.js", "pause.html", "pause.js",
+    "manifest.json", "background.js", "core.js", "rules.js", "site-editor.js", "reviews.js", "review-editor.js", "sync.js", "install-defaults.js", "insights.js", "pause.html", "pause.js",
     "expiry.js", "timer.js", "journal.html", "journal.js", "style.css", "vendor"
   ]) await cp(path.join(root, file), path.join(extensionPath, file), { recursive: true });
 

@@ -36,6 +36,23 @@ try {
     body: '<!doctype html><meta charset="utf-8"><title>Local sites fixture</title><h1>Fixture</h1><textarea id="draft" aria-label="Draft"></textarea>'
   }));
   const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+  await worker.evaluate(() => {
+    globalThis.__siteTestTrace = [];
+    const trace = data => {
+      globalThis.__siteTestTrace.push(data);
+      if (globalThis.__siteTestTrace.length > 120) globalThis.__siteTestTrace.shift();
+    };
+    for (const name of ["onBeforeNavigate", "onCommitted", "onCompleted", "onHistoryStateUpdated", "onReferenceFragmentUpdated"]) {
+      chrome.webNavigation[name].addListener(data => {
+        if (data.frameId === 0) trace({ event: name, tabId: data.tabId, url: data.url, documentId: data.documentId });
+      });
+    }
+    chrome.runtime.onMessage.addListener((message, sender) => {
+      if (["timer", "inspect", "continue"].includes(message.type)) {
+        trace({ message: message.type, tabId: sender.tab?.id, url: sender.url, documentId: sender.documentId });
+      }
+    });
+  });
   const base = `chrome-extension://${new URL(worker.url()).host}`;
   await eventually(() => context.pages().some(page => page.url() === `${base}/journal.html#sites`), "automatic first-run page");
   const journal = context.pages().find(page => page.url() === `${base}/journal.html#sites`);
@@ -104,12 +121,51 @@ try {
     assert.equal(page.url(), `${base}/pause.html#${url}`);
   }
   async function enter() {
-    await page.locator("#choose").click();
-    await page.locator("#reason").selectOption("查找资料");
-    await page.locator('[name="duration"][value="5"]').check();
-    await page.locator("#continue").click();
-    await page.locator("#pause-before-scroll-timer").waitFor();
+    try {
+      await page.locator("#choose").click();
+      await page.locator("#reason").selectOption("查找资料");
+      await page.locator('[name="duration"][value="5"]').check();
+      await page.locator("#continue").click();
+      await page.locator("#pause-before-scroll-timer").waitFor();
+    } catch (error) {
+      const diagnostic = await worker.evaluate(async url => {
+        const tab = (await chrome.tabs.query({})).find(item => item.url === url);
+        let content;
+        if (tab && url.startsWith("https://")) {
+          content = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: async () => ({
+            installed: Boolean(globalThis.__pauseTimerInstalled),
+            promptLoaded: Boolean(globalThis.PauseExpiryPrompt), ready: document.readyState,
+            response: await chrome.runtime.sendMessage({ type: "timer", foreground: false })
+          }) }).catch(error => ({ error: error.message }));
+        }
+        return {
+          url, tab, content, trace: globalThis.__siteTestTrace,
+          state: (await chrome.storage.session.get("state")).state,
+          scripts: await chrome.scripting.getRegisteredContentScripts()
+        };
+      }, page.url());
+      console.error("Synthetic sites-test failure:", JSON.stringify({
+        ...diagnostic, visibleError: await page.locator("#error").count() ? await page.locator("#error").textContent() : ""
+      }, null, 2));
+      throw error;
+    }
   }
+  await gated("https://www.bilibili.com/video/retarget-fixture");
+  await page.locator("#choose").click();
+  await page.locator("#reason").selectOption("查找资料");
+  await page.evaluate(() => {
+    window.previousGateDocument = true;
+    location.hash = "https://video.example.test/retarget-fixture#section";
+  });
+  await page.waitForFunction(() => !window.previousGateDocument &&
+    document.querySelector("#destination")?.textContent.includes("My Videos") &&
+    !document.querySelector("#choose").disabled);
+  assert.equal(await page.locator("#visit-form").isHidden(), true);
+  assert.equal(await page.locator("#reason").inputValue(), "");
+  assert.equal(await page.locator("#reason option").count(), 5);
+  await enter();
+  assert.equal(page.url(), "https://video.example.test/retarget-fixture#section");
+  console.log("PASS a same-document gate retarget reloads its identity, updates the site, and requires a fresh decision");
   await free("https://child.video.example.test/");
   await free("https://video.example.test/watch?v=lesson#part1");
   await gated("https://video.example.test/watch?v=other#part1");

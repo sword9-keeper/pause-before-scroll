@@ -11,7 +11,8 @@
     "test:personal": "node tests/personal-browser.mjs",
     "test:value": "node tests/value-browser.mjs",
     "test:expiry": "node tests/expiry-browser.mjs",
-    "test:sites": "node tests/sites-browser.mjs"
+    "test:sites": "node tests/sites-browser.mjs",
+    "test:reviews": "node tests/reviews-browser.mjs"
   },
   "devDependencies": {
     "@rgrove/parse-xml": "5.0.0",

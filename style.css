@@ -135,6 +135,27 @@ input[type="checkbox"] { width: 18px; height: 18px; flex: none; margin: 0; accen
 .exception-row p { margin:4px 0; font-size:13px; overflow-wrap:anywhere; }
 .rule-actions { display:flex; flex-wrap:wrap; gap:24px; margin-top:28px; }
 .trial-link { display:inline-block; color:#3e658d; margin-top:22px; }
+.self-review { margin-top:32px; border-top:1px solid #d7dfd9; padding-top:20px; }
+.self-review summary { cursor:pointer; font-size:16px; font-weight:500; }
+.self-review summary span { display:inline-block; font-size:12px; font-weight:400; color:#65766b; margin:4px 0 4px 12px; }
+.self-review form { margin-top:24px; max-width:720px; }
+#review-config-fields { display:grid; gap:12px; font-size:13px; }
+#review-config-fields > button { justify-self:start; }
+.review-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+.review-form-grid label { display:grid; gap:8px; font-size:13px; color:#52695f; }
+.review-criterion { margin:18px 0; font-size:13px; color:#68756d; }
+.review-criterion p { margin:5px 0; color:#25352f; }
+.review-heading { margin:32px 0 16px; }
+.review-periods { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+.review-period h3,.self-review > h3 { font-size:14px; font-weight:500; margin:20px 0 14px; overflow-wrap:anywhere; }
+.review-period dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin:0; }
+.review-period dd { font-size:18px; overflow-wrap:anywhere; }
+.review-unknown { display:block; font-size:12px; line-height:1.6; color:#68756d; margin-top:4px; }
+.review-row { display:grid; grid-template-columns:130px minmax(0,1fr) auto; align-items:center; gap:12px; border-bottom:1px solid #d7dfd9; padding:10px 0; font-size:13px; }
+.review-row > * { min-width:0; overflow-wrap:anywhere; }
+.review-row button { justify-self:start; padding-left:0; font-size:13px; }
+.review-actions { display:flex; flex-wrap:wrap; gap:12px 24px; margin-top:24px; align-items:center; }
+#review-status { min-height:24px; font-size:14px; color:#52695f; overflow-wrap:anywhere; }
 @media (max-width: 600px) {
   .topbar { padding: 16px 20px; min-height: 72px; gap: 12px; flex-wrap: wrap; }
   .brand { font-size: 14px; gap: 8px; }
@@ -154,4 +175,7 @@ input[type="checkbox"] { width: 18px; height: 18px; flex: none; margin: 0; accen
   .rule-row-actions { grid-row:auto; grid-column:1 / -1; justify-content:start; }
   .inline-field select { font-size:12px; }
   .inline-field button { padding:8px 12px; }
+  .review-form-grid,.review-periods { grid-template-columns:minmax(0,1fr); }
+  .review-row { grid-template-columns:100px minmax(0,1fr); gap:4px 12px; }
+  .review-row > span:last-child { grid-column:2; }
 }

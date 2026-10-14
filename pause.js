@@ -1,6 +1,7 @@
 import { readableTime } from "./insights.js";
 
 const $ = selector => document.querySelector(selector);
+let initialization = 0;
 async function request(type, extra = {}) {
   const result = await chrome.runtime.sendMessage({ type, ...extra });
   if (!result?.ok) throw new Error(result?.error || "插件暂不可用，请刷新重试。");
@@ -12,7 +13,27 @@ function errorMessage(error) {
 }
 
 async function initialize() {
-  const { site, settings, today, recentReturn } = await request("inspect");
+  const generation = ++initialization;
+  const pageUrl = location.href;
+  $("#choose").disabled = true;
+  $("#leave").disabled = true;
+  $("#continue").disabled = true;
+  const data = await request("inspect", { pageUrl }).catch(error => {
+    if (generation === initialization && pageUrl === location.href) errorMessage(error);
+    return null;
+  });
+  if (!data || generation !== initialization || pageUrl !== location.href) return;
+  if (data.reload) { location.reload(); return; }
+  const { site, settings, today, recentReturn } = data;
+  $("#error").textContent = "";
+  $("#visit-form").reset();
+  $("#visit-form").hidden = true;
+  $("#choose").setAttribute("aria-expanded", "false");
+  $("#custom-wrap").hidden = true;
+  $("#custom-reason").hidden = true;
+  $("#custom-reason-label").hidden = true;
+  $("#custom-reason").required = false;
+  $("#reason").replaceChildren();
   $("#destination").textContent = `即将前往 · ${site.name}`;
   $("#quote").textContent = settings.quote;
   $(".attribution").hidden = settings.quote !== "什么都无法舍弃的人，什么都无法做到。";
@@ -29,6 +50,7 @@ async function initialize() {
   $("#reason").required = true;
   $("#leave").disabled = false;
   $("#choose").disabled = false;
+  $("#continue").disabled = false;
 }
 
 $("#choose").addEventListener("click", () => {
@@ -66,5 +88,10 @@ $("#visit-form").addEventListener("submit", async event => {
     errorMessage(error);
     $("#continue").disabled = false;
   }
+});
+// Chrome may reuse this document when redirecting a second site into the gate.
+// Recheck even on first initialization, since this event can precede script loading.
+window.addEventListener("hashchange", () => {
+  void initialize().catch(errorMessage);
 });
 initialize().catch(errorMessage);

@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const work = await mkdtemp(path.join(tmpdir(), "pause-personal-"));
 const extensionPath = path.join(work, "extension");
 await mkdir(extensionPath);
-for (const file of ["manifest.json", "core.js", "rules.js", "site-editor.js", "background.js", "sync.js", "install-defaults.js", "insights.js", "vendor", "pause.html", "pause.js", "expiry.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
+for (const file of ["manifest.json", "core.js", "rules.js", "site-editor.js", "reviews.js", "review-editor.js", "background.js", "sync.js", "install-defaults.js", "insights.js", "vendor", "pause.html", "pause.js", "expiry.js", "timer.js", "journal.html", "journal.js", "style.css"]) {
   await cp(path.join(root, file), path.join(extensionPath, file), { recursive: true });
 }
 const manifest = JSON.parse(await readFile(path.join(extensionPath, "manifest.json"), "utf8"));
@@ -40,6 +40,7 @@ try {
   assert.deepEqual((await worker.evaluate(() => chrome.storage.local.get("syncConfig"))).syncConfig, preset);
   assert.ok(await worker.evaluate(() => chrome.permissions.contains({ origins: ["https://dav.example.test/*"] })));
   assert.equal((await worker.evaluate(() => chrome.alarms.get("webdav-sync"))).periodInMinutes, 5);
+  assert.equal((await worker.evaluate(() => chrome.storage.local.get("selfReview"))).selfReview, undefined);
   console.log("PASS personal install seeds credentials, host access and automatic sync without setup");
 
   await page.locator("#sync-enabled").uncheck();

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "刷之前想一下",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "进入前停一下，按自己选择的时间离开。支持可选的 WebDAV 设置与记录同步。",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms", "webNavigation", "scripting"],
