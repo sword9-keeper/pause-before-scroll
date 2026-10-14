@@ -60,6 +60,12 @@ clipping defect that earlier hidden-scrollbar fixtures missed. `LIVE_TEST.md`
 separates failed attempts, visual review, native permission gaps and real playback
 evidence. This is usability evidence, not behavioral efficacy.
 
+The 0.8.2 follow-up addresses fullscreen countdown visibility and nested-fullscreen
+exit at expiry. Container controls are hit-tested; native video/frame fullscreen
+uses an explicitly display-only countdown without unusable buttons. These are
+isolated synthetic regressions, not authenticated Chrome or macOS acceptance.
+The regular-Chrome connection remains unavailable; its acceptance is still open.
+
 ## Measurement and Pilot Gate
 
 The current visit timer measures elapsed wall-clock time, including background

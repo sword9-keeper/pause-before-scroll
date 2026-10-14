@@ -121,9 +121,21 @@
       });
       document.addEventListener("play", this.onPlay, true);
       for (const media of document.querySelectorAll("video,audio")) media.pause();
-      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+      void this.leaveFullscreen();
       this.dialog.showModal();
       title.focus();
+    }
+
+    async leaveFullscreen() {
+      const host = this.host;
+      while (this.host === host && host.isConnected && document.fullscreenElement) {
+        let previous = document.fullscreenElement;
+        while (previous.shadowRoot?.fullscreenElement) previous = previous.shadowRoot.fullscreenElement;
+        try { await document.exitFullscreen(); }
+        catch { return; }
+        // Nested fullscreen exits one layer at a time; stop if the browser made no progress.
+        if (previous.matches(":fullscreen")) return;
+      }
     }
 
     async perform(action) {

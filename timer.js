@@ -80,12 +80,36 @@
     const viewport = viewportSize();
     host.style.maxWidth = `${Math.max(0, viewport.width - 16)}px`;
     const bounds = host.getBoundingClientRect();
+    const y = host._clock.classList.contains("readonly") ? 0 : layout.y;
     host.style.left = `${8 + layout.x * Math.max(0, viewport.width - bounds.width - 16)}px`;
-    host.style.top = `${8 + layout.y * Math.max(0, viewport.height - bounds.height - 16)}px`;
+    host.style.top = `${8 + y * Math.max(0, viewport.height - bounds.height - 16)}px`;
   }
 
   function saveLayout() {
     void chrome.runtime.sendMessage({ type: "timerLayout", layout }).catch(() => {});
+  }
+
+  function fullscreenLayer() {
+    if (!host?.isConnected) return;
+    try {
+      if (host.matches(":popover-open")) host.hidePopover();
+      let fullscreen = document.fullscreenElement;
+      while (fullscreen?.shadowRoot?.fullscreenElement) fullscreen = fullscreen.shadowRoot.fullscreenElement;
+      // Replaced elements cannot render children; their overlay is display-only.
+      const readOnly = fullscreen && /^(VIDEO|AUDIO|IFRAME|EMBED|OBJECT|IMG|CANVAS|INPUT|TEXTAREA|SELECT)$/.test(fullscreen.tagName);
+      const parent = fullscreen && !readOnly ? fullscreen : document.documentElement;
+      // Fullscreen makes nodes outside its subtree inert, even in the top layer.
+      if (host.parentNode !== parent) parent.append(host);
+      host._clock.classList.toggle("readonly", Boolean(readOnly));
+      if (fullscreen) {
+        // Reopen after each fullscreen transition, including nested players.
+        host.popover = "manual";
+        host.showPopover();
+      } else host.removeAttribute("popover");
+    } catch {
+      host.removeAttribute("popover");
+    }
+    position();
   }
 
   function mount() {
@@ -93,10 +117,11 @@
     host = document.createElement("div");
     host.id = "pause-before-scroll-timer";
     // Auto width shrinks against the right edge before labels render or scrollbars appear.
-    host.style.cssText = "all:initial;position:fixed;width:max-content;left:8px;top:8px;z-index:2147483647;";
+    host.style.cssText = "all:initial;position:fixed;width:max-content;inset:auto;left:8px;top:8px;margin:0;z-index:2147483647;";
     const root = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
+      :host::backdrop { display:none; }
       .clock { box-sizing:border-box; display:flex; align-items:center; gap:8px;
         width:max-content; max-width:100%; min-height:50px; padding:6px 8px; border:1px solid #cbd5ce;
         border-radius:6px; background:#fff; color:#24352c;
@@ -110,6 +135,8 @@
       button:focus-visible { outline:2px solid #287b58; }
       .drag { cursor:grab; touch-action:none; }
       .collapsed .label { display:none; }
+      .readonly button { display:none; }
+      .readonly .label { display:inline; }
       .label { font-size:12px; flex:0 0 4em; }
       strong { width:7ch; flex:none; white-space:nowrap; text-align:center; }
       .done { width:auto; max-width:110px; font:12px/1.5 system-ui; padding:3px 7px;
@@ -201,6 +228,7 @@
     host._done = done;
     document.documentElement.append(host);
     appearance();
+    fullscreenLayer();
   }
 
   async function sync(type = "timer") {
@@ -246,6 +274,7 @@
   window.addEventListener("focus", () => { void sync().then(tick); });
   window.addEventListener("blur", () => { void sync().then(tick); });
   window.addEventListener("resize", position);
+  document.addEventListener("fullscreenchange", fullscreenLayer);
   chrome.runtime.onMessage.addListener(message => {
     if (message.type === "visitReleased") {
       syncVersion++;
