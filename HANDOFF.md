@@ -20,6 +20,7 @@
 - `reviews.js` / `review-editor.js`：独立、默认关闭的本机自评模型和界面。
 - `PILOT.md` / `scripts/analyze-pilot.mjs`：尚未运行的自愿试用方案和只读的单人描述分析。
 - `PRODUCT.md`：完整产品目标、验收证据与未完成路线。不能将功能测试通过当成真实减量效果已经成立。
+- `privacy.html` / `STORE.md`：离线数据说明与尚未提交的公开分发准备；不要把草案当作已批准的商店材料。
 - `tests/`：规则测试和真实扩展浏览器测试。
 
 0.2.0 改为导航监听：顶层导航开始时判断是否需要确认，后台先保存访问尝试，再用 `tabs.update()` 打开 `pause.html`。提交、完成、站内路由事件和内容脚本作补充检查。不是网络层拦截，不能保证目标页面零请求或完全不闪现。
@@ -136,6 +137,22 @@ settings、records、WebDAV 或普通记录导出。打开面板本身不会创�
 
 ## 验证边界
 
+0.8.3 增加图标、隐私说明与发布前检查。`npm run icons` 生成图标，
+`npm run check:public` 检查空安装预置、必选主机权限、图标清单与尺寸、隐私版本及依赖许可证。
+打包脚本依赖 Node.js 执行该检查，但安装 ZIP 不依赖 Node.js。
+检查范围不是完整 Git 历史密钥扫描或商店安全审核。
+`npm run test:distribution` 同时生成实际扩展 UI 的演示素材；隐私页在
+1280 / 390 / 320 像素检查，图标有解码和像素检查，不使用真实服务器或登录信息。
+每次生成后的视觉复核仍须独立完成。发布限制见 `STORE.md`。
+
+2026-10-14 的 0.8.3 源码回归：94 项单元测试、32 项主流程浏览器检查，
+以及其余十套浏览器专项全部通过。专项日志在
+`test-results/regression-0.8.3-specialists.log`。分发演示图已逐张检查，
+没有改写截图中的焦点状态；隐私页三种宽度未见横向裁切或重叠。
+打包后另运行 `npm run test:package -- <公开包解压目录>`；
+其结果与包核对报告保留在 `test-results/`，不能以源码回归替代包测试。
+真实日常 Chrome、安全设置与账号均未改动；此次未连接真实 WebDAV。
+
 0.8.2 本地验收（2026-10-14）：92 项单元测试和十套自动化浏览器脚本通过；
 全屏专项另以可见窗口复跑，两种模式各 37 个检查点无页面错误，截图与只读浮窗像素已复核。
 修改前的全屏遮挡及嵌套退出失败证据已保留。该版新证据使用合成网页，不等于实站登录态；
@@ -159,7 +176,7 @@ Windows Chromium for Testing 151.0.7922.34 上完成拦截、48 秒暂停、文�
 
 ## Git
 
-功能修改先跑单元测试与十套浏览器脚本（e2e、upgrade、sync、personal、value、expiry、sites、reviews、timer-layout、timer-fullscreen）；真实网站的 `test:live` 另需人工原生授权与截图复核。不要提交 `node_modules/`、测试浏览器配置或导出的个人记录。发布包用白名单脚本生成，源码和测试留在仓库。
+功能修改先跑单元测试与十一套浏览器脚本（e2e、upgrade、sync、personal、value、expiry、sites、reviews、timer-layout、timer-fullscreen、distribution）；真实网站的 `test:live` 另需人工原生授权与截图复核。不要提交 `node_modules/`、测试浏览器配置、商店生成素材或导出的个人记录。发布包用白名单脚本生成，源码和测试留在仓库。
 
 ## 开源对照
 

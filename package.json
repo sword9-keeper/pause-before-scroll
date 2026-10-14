@@ -4,6 +4,9 @@
   "type": "module",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
+    "icons": "node scripts/render-icons.mjs",
+    "check:public": "node scripts/check-public.mjs",
+    "store:assets": "node scripts/store-assets.mjs",
     "test": "node --test tests/*.test.js",
     "test:e2e": "node tests/browser.mjs",
     "test:upgrade": "node tests/upgrade.mjs",
@@ -15,7 +18,9 @@
     "test:reviews": "node tests/reviews-browser.mjs",
     "test:live": "node tests/live-browser.mjs",
     "test:timer-layout": "node tests/timer-layout-browser.mjs",
-    "test:timer-fullscreen": "node tests/timer-fullscreen-browser.mjs"
+    "test:timer-fullscreen": "node tests/timer-fullscreen-browser.mjs",
+    "test:distribution": "node scripts/store-assets.mjs",
+    "test:package": "node tests/package-browser.mjs"
   },
   "devDependencies": {
     "@rgrove/parse-xml": "5.0.0",

@@ -3,11 +3,13 @@ param([switch]$Personal)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $manifest = Get-Content -LiteralPath (Join-Path $root "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+& node (Join-Path $PSScriptRoot "check-public.mjs")
+if ($LASTEXITCODE -ne 0) { throw "Public packaging checks failed; no archive was created." }
 $files = @(
     "manifest.json", "core.js", "rules.js", "background.js", "sync.js", "install-defaults.js", "insights.js",
     "pause.html", "pause.js", "expiry.js", "timer.js",
-    "journal.html", "journal.js", "site-editor.js", "reviews.js", "review-editor.js", "style.css",
-    "README.md", "HANDOFF.md", "PRODUCT.md", "PILOT.md", "LIVE_TEST.md", "vendor"
+    "journal.html", "journal.js", "site-editor.js", "reviews.js", "review-editor.js", "style.css", "privacy.html", "assets",
+    "README.md", "HANDOFF.md", "PRODUCT.md", "PILOT.md", "LIVE_TEST.md", "STORE.md", "vendor"
 ) | ForEach-Object { Join-Path $root $_ }
 $output = Join-Path $root "artifacts"
 New-Item -ItemType Directory -Path $output -Force | Out-Null

@@ -52,7 +52,7 @@ established by shipping features or passing automated tests.
 | Humane end-of-visit flow | Implemented and technically verified; partial live-site evidence | Chromium draft/document preservation, media pause, fullscreen exit, keyboard/narrow layouts; three anonymous real-site flows and one Bilibili video with near-deadline playback/fullscreen samples on Windows Chromium; authenticated workflows, other players and macOS pending |
 | Optional daily self-review | Implemented and technically verified | Unit consent, unknown/zero, dates, revision and export checks; Chromium two-window conflicts, opt-out, deletion, no added network requests and 1280/390/320 px layouts; real-user and macOS validation pending |
 | Opt-in efficacy pilot | Protocol and descriptive analysis tooling prepared; not run | PILOT.md and synthetic analysis tests are preparation only; real consenting users, comparable baseline/intervention data, dropout and adverse effects remain missing |
-| Public distribution | Not started | Store-ready artifact, privacy policy, signed-off listing, real macOS check |
+| Public distribution | Preparation in 0.8.3; not submitted or published | Local privacy disclosure, icons, public-source guard and actual-UI demo assets; hosted privacy URL, publisher/contact, licensing, security review, signed-off listing and real macOS check remain missing |
 | Adoption and sustained value | Unproven | Real activation, retention, feedback, reduced unwanted use, not downloads alone |
 
 The 0.8.1 live-site investigation found and fixed a real scrollbar-dependent timer
@@ -65,6 +65,13 @@ exit at expiry. Container controls are hit-tested; native video/frame fullscreen
 uses an explicitly display-only countdown without unusable buttons. These are
 isolated synthetic regressions, not authenticated Chrome or macOS acceptance.
 The regular-Chrome connection remains unavailable; its acceptance is still open.
+
+Version 0.8.3 adds an offline privacy disclosure accessible from the entry and
+journal pages, extension icons, a pre-packaging public-source check and candidate
+store images from the actual UI with explicitly synthetic examples. `STORE.md`
+tracks the draft listing, permission rationale and unresolved publication gates.
+Neither a clean preset nor HTTPS proves full secret isolation, secure storage,
+policy compliance or store acceptance. No submission or public push was made.
 
 ## Measurement and Pilot Gate
 

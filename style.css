@@ -27,7 +27,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .text-button { background: transparent; padding: 8px 0; color: #53645a; font-weight: 400; }
 .topbar { min-height: 88px; padding: 20px 5%; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #e0e6e1; }
 .brand { display: inline-flex; align-items: center; gap: 12px; font-weight: 600; }
-.mark { display: inline-grid; place-items: center; width: 30px; height: 30px; background: #286247; color: white; border-radius: 4px; }
+.brand-icon { display:block; width:40px; height:40px; flex:none; }
 .topbar > a:last-child, .local-label { color: #69776e; font-size: 13px; }
 .pause-page { min-height: 100vh; display: flex; flex-direction: column; }
 .pause-main { width: min(100% - 48px, 740px); margin: auto; padding: 64px 0 40px; }
@@ -41,6 +41,16 @@ h1, h2, p { overflow-wrap: anywhere; }
 h2 { font-size: 17px; font-weight: 500; margin: 0 0 20px; }
 .decision-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 footer { padding: 28px 24px; color: #808981; text-align: center; font-size: 12px; }
+.document-footer { margin-top:32px; padding:20px 0 0; border-top:1px solid #e0e6e1; text-align:left; }
+.privacy-main { max-width:800px; margin:0 auto; padding:40px 24px 64px; }
+.privacy-main h1 { font-size:28px; line-height:1.4; margin:0 0 12px; }
+.privacy-main h2 { font-size:19px; margin:32px 0 12px; }
+.privacy-main p,.privacy-main li { overflow-wrap:anywhere; }
+.privacy-main ul { padding-left:22px; }
+.privacy-main li { margin:8px 0; }
+.privacy-date { color:#69776e; font-size:13px; }
+.privacy-warning { border-left:3px solid #9e6452; padding:4px 0 4px 16px; color:#704d41; }
+.privacy-index { display:flex; flex-wrap:wrap; gap:12px 24px; padding:20px 0; margin:24px 0; border-block:1px solid #e0e6e1; font-size:14px; color:#3e658d; }
 fieldset { padding: 0; margin: 0; border: none; min-width: 0; }
 legend { padding: 0; margin-bottom: 12px; }
 #visit-form { max-width: 480px; margin-top: 30px; display: grid; gap: 12px; }

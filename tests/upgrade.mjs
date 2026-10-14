@@ -55,7 +55,7 @@ try {
 
   for (const file of [
     "manifest.json", "background.js", "core.js", "rules.js", "site-editor.js", "reviews.js", "review-editor.js", "sync.js", "install-defaults.js", "insights.js", "pause.html", "pause.js",
-    "expiry.js", "timer.js", "journal.html", "journal.js", "style.css", "vendor"
+    "expiry.js", "timer.js", "journal.html", "journal.js", "style.css", "vendor", "assets", "privacy.html"
   ]) await cp(path.join(root, file), path.join(extensionPath, file), { recursive: true });
 
   await worker.evaluate(() => chrome.runtime.reload()).catch(error => {
